@@ -99,7 +99,7 @@ Name: "installhook"; Description: "Install DCS Lua hook (auto-start with mission
 Source: "{DIST_DIR}\\*"; DestDir: "{{app}}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Lua hook source (for the install task)
-Source: "{os.path.join(PROJECT_DIR, 'dcs_command_palette_hook.lua')}"; DestDir: "{{app}}"; Flags: ignoreversion
+Source: "{os.path.join(PROJECT_DIR, 'src', 'lua', 'dcs_command_palette_hook.lua')}"; DestDir: "{{app}}"; Flags: ignoreversion
 
 [Icons]
 Name: "{{group}}\\{{#MyAppName}}"; Filename: "{{app}}\\{{#MyAppExeName}}"
@@ -224,7 +224,7 @@ def build_pyinstaller() -> bool:
         "--name", "dcs-command-palette",
         "--noconsole",
         "--noconfirm",
-        "--add-data", f"dcs_command_palette_hook.lua{os.pathsep}.",
+        "--add-data", os.path.join("src", "lua", "dcs_command_palette_hook.lua") + f"{os.pathsep}.",
         "--hidden-import", "src.installer.wizard",
         "--hidden-import", "src.bios.installer",
         "--hidden-import", "pynput.keyboard._win32",

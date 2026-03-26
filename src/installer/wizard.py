@@ -47,17 +47,15 @@ def find_dcs_saved_games() -> str | None:
 
 def install_hook(palette_dir: str, dcs_saved_games: str) -> bool:
     """Install the Lua hook to Scripts/Hooks/."""
-    hook_src = os.path.join(palette_dir, "dcs_command_palette_hook.lua")
+    # Try src/lua/ first (source layout), then palette_dir root (exe distribution)
+    hook_src = os.path.join(palette_dir, "src", "lua", "dcs_command_palette_hook.lua")
+    if not os.path.isfile(hook_src):
+        hook_src = os.path.join(palette_dir, "dcs_command_palette_hook.lua")
     if not os.path.isfile(hook_src):
         # In .exe distribution, the hook is bundled alongside the exe
         if getattr(sys, "frozen", False):
             hook_src = os.path.join(
                 os.path.dirname(sys.executable),
-                "dcs_command_palette_hook.lua",
-            )
-        else:
-            hook_src = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
                 "dcs_command_palette_hook.lua",
             )
 

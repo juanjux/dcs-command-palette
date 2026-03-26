@@ -27,7 +27,7 @@ def build() -> None:
         "--noconsole",  # No console window (GUI app)
         "--noconfirm",  # Overwrite without asking
         # Include the Lua hook file as data
-        "--add-data", f"dcs_command_palette_hook.lua{os.pathsep}.",
+        "--add-data", os.path.join("src", "lua", "dcs_command_palette_hook.lua") + f"{os.pathsep}.",
         # Include installer modules so they're available at runtime
         "--hidden-import", "src.installer.wizard",
         "--hidden-import", "src.bios.installer",

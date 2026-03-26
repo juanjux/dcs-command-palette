@@ -71,7 +71,7 @@ def _get_version_string() -> str:
 
 
 HOOK_FILENAME = "dcs_command_palette_hook.lua"
-HOOK_SOURCE = os.path.join(PROJECT_DIR, HOOK_FILENAME)
+HOOK_SOURCE = os.path.join(PROJECT_DIR, "src", "lua", HOOK_FILENAME)
 HOOKS_DIR = os.path.join(DCS_SAVED_GAMES, "Scripts", "Hooks")
 HOOK_DEST = os.path.join(HOOKS_DIR, HOOK_FILENAME)
 
