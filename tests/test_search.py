@@ -125,6 +125,44 @@ def test_search_multi_word_with_category(tmp_path: object) -> None:
         )
 
 
+def test_position_labels_order_rotary() -> None:
+    """Rotary selectors use ascending value_down order.
+
+    ECM Mode Switch: OFF(0.0) → STBY(0.1) → BIT(0.2) → REC(0.3) → XMIT(0.4)
+    DCS-BIOS position 0=OFF, 4=XMIT.
+    """
+    commands = load_all_commands(
+        dcs_install_dir=r"D:\SteamLibrary\steamapps\common\DCSWorld",
+        aircraft_module="FA-18C", aircraft_input_name="FA-18C",
+        controls_json_path=_FA18C_JSON,
+    )
+    ecm = [c for c in commands if c.identifier == "ECM_MODE_SW"][0]
+    assert ecm.position_labels is not None
+    assert ecm.position_labels[0] == "OFF"
+    assert ecm.position_labels[1] == "STBY"
+    assert ecm.position_labels[2] == "BIT"
+    assert ecm.position_labels[3] == "REC"
+    assert ecm.position_labels[4] == "XMIT"
+
+
+def test_position_labels_order_toggle() -> None:
+    """Toggle switches with negative value_down use descending order.
+
+    FLAP Switch: AUTO(1.0) → HALF(0.0) → FULL(-1.0)
+    DCS-BIOS position 0=AUTO, 1=HALF, 2=FULL.
+    """
+    commands = load_all_commands(
+        dcs_install_dir=r"D:\SteamLibrary\steamapps\common\DCSWorld",
+        aircraft_module="FA-18C", aircraft_input_name="FA-18C",
+        controls_json_path=_FA18C_JSON,
+    )
+    flap = [c for c in commands if c.identifier == "FLAP_SW"][0]
+    assert flap.position_labels is not None
+    assert flap.position_labels[0] == "AUTO"
+    assert flap.position_labels[1] == "HALF"
+    assert flap.position_labels[2] == "FULL"
+
+
 def test_bios_category_uses_panel_name() -> None:
     """Category should use the original DCS-BIOS panel name.
 

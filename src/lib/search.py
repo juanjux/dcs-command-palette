@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Tuple
 from rapidfuzz import fuzz, process
 
 from src.palette.commands import Command, CommandSource
+import src.config.settings as cfg
 from src.config.settings import (
     MAX_RESULTS,
     PREFIX_MATCH_BONUS,
@@ -30,11 +31,24 @@ def _frequency_score(count: int, max_count: int) -> float:
     return 100.0 * count / max_count
 
 
+def _is_unbound_keyboard(cmd: Any) -> bool:
+    """Check if a command is an unbound keyboard shortcut (not a palette builtin)."""
+    return (
+        getattr(cmd, "source", None) == CommandSource.KEYBOARD
+        and not getattr(cmd, "key_combo", "")
+        and not cmd.identifier.startswith("__")
+    )
+
+
 def search(
     query: str,
     commands: List[Command],
     usage: UsageTracker,
 ) -> List[Command]:
+    # Filter out unbound keyboard shortcuts unless the setting is enabled
+    if not cfg.SHOW_UNBOUND:
+        commands = [c for c in commands if not _is_unbound_keyboard(c)]
+
     max_count = usage.max_count()
 
     if not query.strip():

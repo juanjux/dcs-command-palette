@@ -94,6 +94,13 @@ def _entry_to_command(entry: KeyboardEntry) -> Command:
     )
 
 
+@dataclass
+class _PositionInfo:
+    """Position name with optional DCS value_down for ordering."""
+    name: str
+    value_down: Optional[float] = None
+
+
 def _enrich_position_labels(
     commands: List[Command], kb_entries: List[KeyboardEntry],
 ) -> None:
@@ -102,32 +109,28 @@ def _enrich_position_labels(
     Keyboard entries follow the pattern "{Description} - {PositionName}"
     (e.g., "FLIR Switch - OFF", "FLIR Switch - STBY", "FLIR Switch - ON").
     For BIOS selectors without position_labels, we collect these names and
-    assign them as position labels in order of appearance (matching max_value).
+    use value_down from the Lua file to determine the correct position index.
 
     Excludes directional entries like "CCW", "CW", "Up", "Down", "Pull", "Stow".
     """
-    # Build a map of description -> list of position names from keyboard entries
+    # Build a map of description -> list of (pos_name, value_down) from keyboard entries
     directional = {"ccw", "cw", "up", "down", "pull", "stow", "pull/stow", "cycle",
                     "toggle", "press", "release", "held left/down", "centered",
                     "held right/up", "aug pull"}
-    desc_positions: Dict[str, List[str]] = {}
+    desc_positions: Dict[str, List[_PositionInfo]] = {}
     for entry in kb_entries:
         if " - " not in entry.name:
             continue
         base, pos_name = entry.name.rsplit(" - ", 1)
         if pos_name.lower() in directional:
             continue
-        desc_positions.setdefault(base, []).append(pos_name)
+        desc_positions.setdefault(base, []).append(
+            _PositionInfo(name=pos_name, value_down=entry.value_down)
+        )
 
     def _normalize_for_match(s: str) -> str:
         """Normalize a string for fuzzy base-name matching."""
         return s.lower().replace("-", " ").replace("_", " ").strip()
-
-    # Build a normalized lookup for fuzzy matching
-    norm_to_bases: Dict[str, List[str]] = {}
-    for base_name in desc_positions:
-        norm = _normalize_for_match(base_name)
-        norm_to_bases.setdefault(norm, []).append(base_name)
 
     # Apply to BIOS commands that lack labels
     for cmd in commands:
@@ -141,23 +144,22 @@ def _enrich_position_labels(
         # Generate candidate names to try matching against keyboard base names:
         # 1. Exact BIOS description
         # 2. Identifier-derived name (RADAR_SW -> "Radar Switch")
-        # 3. Common variations
         id_as_desc = cmd.identifier.replace("_SW", " Switch").replace("_KNOB", " Knob").replace("_", " ").title()
         candidates = [cmd.description, id_as_desc]
 
-        positions = None
+        pos_infos: Optional[List[_PositionInfo]] = None
         for candidate in candidates:
             # Exact match
-            positions = desc_positions.get(candidate)
-            if positions:
+            pos_infos = desc_positions.get(candidate)
+            if pos_infos:
                 break
 
             # Prefix matching (both directions)
             for base_name, pos_list in desc_positions.items():
                 if base_name.startswith(candidate) or candidate.startswith(base_name):
-                    positions = pos_list
+                    pos_infos = pos_list
                     break
-            if positions:
+            if pos_infos:
                 break
 
             # Substring matching: BIOS desc is contained in keyboard base or vice versa
@@ -166,17 +168,35 @@ def _enrich_position_labels(
             for base_name, pos_list in desc_positions.items():
                 norm_base = _normalize_for_match(base_name)
                 if norm_cand in norm_base or norm_base in norm_cand:
-                    positions = pos_list
+                    pos_infos = pos_list
                     break
-            if positions:
+            if pos_infos:
                 break
 
-        if not positions:
+        if not pos_infos:
             continue
 
         # The number of positions should match max_value + 1
-        if len(positions) == cmd.max_value + 1:
-            cmd.position_labels = {i: label for i, label in enumerate(positions)}
+        if len(pos_infos) != cmd.max_value + 1:
+            continue
+
+        # Use value_down to determine correct position order.
+        # Two DCS conventions:
+        # 1. Rotary selectors: values 0.0, 0.1, 0.2... -> ascending = BIOS position order
+        #    E.g., ECM: OFF=0.0, STBY=0.1, BIT=0.2, REC=0.3, XMIT=0.4
+        # 2. Toggle switches: values -1.0, 0.0, 1.0 -> descending = BIOS position order
+        #    E.g., FLAP: AUTO=1.0, HALF=0.0, FULL=-1.0 -> BIOS 0=AUTO, 1=HALF, 2=FULL
+        # Detection: if any value is negative, it's a toggle switch (sort descending)
+        all_have_values = all(p.value_down is not None for p in pos_infos)
+        if all_have_values:
+            has_negative = any((p.value_down or 0.0) < 0 for p in pos_infos)
+            sorted_pos = sorted(
+                pos_infos, key=lambda p: p.value_down or 0.0, reverse=has_negative,
+            )
+            cmd.position_labels = {i: p.name for i, p in enumerate(sorted_pos)}
+        else:
+            # Fallback: assign in order of appearance (legacy behavior)
+            cmd.position_labels = {i: p.name for i, p in enumerate(pos_infos)}
 
 
 def load_all_commands(

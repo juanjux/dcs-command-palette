@@ -544,6 +544,7 @@ class App:
         """Load display preferences from settings.json into config module."""
         settings = _read_settings()
         cfg.SHOW_IDENTIFIERS = bool(settings.get("show_identifiers", False))
+        cfg.SHOW_UNBOUND = bool(settings.get("show_unbound", False))
         cfg.AUTO_HIDE_SECONDS = int(settings.get("auto_hide_seconds", 5))
         cfg.OVERLAY_POSITION = str(settings.get("overlay_position", "top-center"))
         cfg.DCS_BIOS_HOST = str(settings.get("dcs_bios_host", "127.0.0.1"))

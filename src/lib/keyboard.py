@@ -32,6 +32,7 @@ class KeyboardEntry:
     name: str
     category: str
     key_combo: str  # e.g. "LAlt + LCtrl + S"
+    value_down: Optional[float] = None  # DCS value_down for position mapping
 
 
 # Regex to extract command entries from Lua files
@@ -58,6 +59,9 @@ def _build_combo_string(key: str, reformers: List[str]) -> str:
     return " + ".join(parts)
 
 
+_VALUE_DOWN_RE = re.compile(r"value_down\s*=\s*([\-\d.]+)")
+
+
 def parse_lua_commands(lua_content: str) -> List[KeyboardEntry]:
     """Extract keyboard entries from Lua input file content."""
     results: List[KeyboardEntry] = []
@@ -71,7 +75,33 @@ def parse_lua_commands(lua_content: str) -> List[KeyboardEntry]:
         reformers = _parse_reformers(reformers_raw) if reformers_raw else []
         combo = _build_combo_string(key, reformers) if key else ""
 
-        results.append(KeyboardEntry(name=name, category=category, key_combo=combo))
+        # Extract value_down from the full block around this match.
+        # Expand to find the enclosing {...} in the original content.
+        block_start = lua_content.rfind("{", 0, m.start() + 1)
+        # Find the matching closing brace (may be after the regex match end)
+        block_end = m.end()
+        brace_depth = 0
+        for i in range(block_start, len(lua_content)):
+            if lua_content[i] == "{":
+                brace_depth += 1
+            elif lua_content[i] == "}":
+                brace_depth -= 1
+                if brace_depth == 0:
+                    block_end = i + 1
+                    break
+        full_block = lua_content[block_start:block_end]
+
+        value_down: Optional[float] = None
+        vd_m = _VALUE_DOWN_RE.search(full_block)
+        if vd_m:
+            try:
+                value_down = float(vd_m.group(1))
+            except ValueError:
+                pass
+
+        results.append(KeyboardEntry(
+            name=name, category=category, key_combo=combo, value_down=value_down,
+        ))
 
     return results
 

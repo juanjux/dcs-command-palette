@@ -181,6 +181,9 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._show_ids_checkbox = QCheckBox("Show DCS-BIOS identifiers (e.g., FLAP_SW) below command names")
         display_layout.addWidget(self._show_ids_checkbox)
 
+        self._show_unbound_checkbox = QCheckBox("Show keyboard shortcuts without a keybinding assigned")
+        display_layout.addWidget(self._show_unbound_checkbox)
+
         autohide_row = QHBoxLayout()
         autohide_row.addWidget(QLabel("Auto-hide after inactivity (seconds, 0 = disabled):"))
         self._autohide_edit = QLineEdit()
@@ -330,6 +333,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         settings = _read_settings()
         self._show_ids_checkbox.setChecked(bool(settings.get("show_identifiers", False)))
+        self._show_unbound_checkbox.setChecked(bool(settings.get("show_unbound", False)))
         self._autohide_edit.setText(str(settings.get("auto_hide_seconds", 5)))
         pos_idx = self._position_combo.findText(str(settings.get("overlay_position", "top-center")))
         if pos_idx >= 0:
@@ -574,6 +578,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         settings["dcs_install_dir"] = self._dcs_dir
         settings["aircraft"] = self._aircraft
         settings["show_identifiers"] = self._show_ids_checkbox.isChecked()
+        settings["show_unbound"] = self._show_unbound_checkbox.isChecked()
         try:
             settings["auto_hide_seconds"] = int(self._autohide_edit.text())
         except ValueError:

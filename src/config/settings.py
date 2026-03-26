@@ -74,6 +74,7 @@ DESCRIPTION_FONT_SIZE: int = 12
 
 # Display options
 SHOW_IDENTIFIERS: bool = False  # Show DCS-BIOS identifiers below the description
+SHOW_UNBOUND: bool = False  # Show keyboard shortcuts that have no keybinding assigned
 AUTO_HIDE_SECONDS: int = 5  # Hide palette after N seconds of inactivity (0 = disabled)
 
 # Overlay position: "top", "center", "bottom" (vertical), combined with
