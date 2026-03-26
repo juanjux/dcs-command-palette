@@ -219,6 +219,51 @@ def resolve_unit_type_to_module(
         if module.startswith(unit_type):
             return module
 
+    # Fuzzy: strip all punctuation and compare case-insensitively
+    # e.g., "F18C" -> "f18c", "FA-18C" -> "fa18c"
+    def _normalize(s: str) -> str:
+        return s.lower().replace("-", "").replace("_", "").replace(" ", "")
+
+    norm_input = _normalize(unit_type)
+    best_match: Optional[str] = None
+    best_score = 0
+    for module in installed:
+        norm_module = _normalize(module)
+        if norm_input == norm_module:
+            return module  # exact normalized match
+
+        # Check containment both ways
+        if norm_input in norm_module:
+            score = len(norm_input) * 2
+            if score > best_score:
+                best_score = score
+                best_match = module
+        elif norm_module in norm_input:
+            score = len(norm_module)
+            if score > best_score:
+                best_score = score
+                best_match = module
+
+    if best_match:
+        return best_match
+
+    # Last resort: extract digits+trailing letter sequence and match
+    # e.g., "F18C" -> "18c", "FA-18C" -> "18c" — both match
+    def _extract_sig(s: str) -> str:
+        s = _normalize(s)
+        # Find first digit, take everything from there
+        for i, ch in enumerate(s):
+            if ch.isdigit():
+                return s[i:]
+        return s
+
+    sig_input = _extract_sig(unit_type)
+    if len(sig_input) >= 2:
+        for module in installed:
+            sig_module = _extract_sig(module)
+            if sig_input == sig_module or sig_input.startswith(sig_module) or sig_module.startswith(sig_input):
+                return module
+
     return None
 
 
