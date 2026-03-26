@@ -191,7 +191,6 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         position_row = QHBoxLayout()
         position_row.addWidget(QLabel("Overlay position:"))
-        from PyQt6.QtWidgets import QComboBox  # type: ignore[import-untyped]
         self._position_combo = QComboBox()
         self._position_combo.addItems([
             "top-left", "top-center", "top-right",
