@@ -1,0 +1,27 @@
+[project]
+name = "dcs-command-palette"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.9"
+dependencies = [
+    "pynput>=1.8.1",
+    "pyqt6>=6.10.2",
+    "rapidfuzz>=3.13.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=8.4.2",
+]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["pynput.*", "PyQt6.*"]
+ignore_missing_imports = true
