@@ -20,10 +20,12 @@ A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by def
 ### From Release (.exe)
 
 1. Download the latest release
-2. Extract to `Saved Games\DCS\dcs-command-palette\`
-3. Run `dcs-command-palette.exe` once to configure
-4. Open Settings -> Install Lua Hook
-5. (Optional) Open Settings -> Install/Update DCS-BIOS
+2. Extract anywhere (e.g., your Desktop or a tools folder)
+3. Run `dcs-command-palette.exe` — a setup wizard will guide you on first launch:
+   - Auto-detects your DCS installation
+   - Installs the Lua hook (auto-start/stop with DCS missions)
+   - Offers to install DCS-BIOS for cockpit control integration
+4. You can re-run setup anytime from the Settings window
 
 ### From Source (for devs)
 

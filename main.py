@@ -24,6 +24,7 @@ import config as cfg
 from config import DCS_BIOS_HOST, DCS_BIOS_PORT, DCS_SAVED_GAMES, PALETTE_LISTEN_PORT, PROJECT_DIR
 from config_window import ConfigWindow
 from dcs_bios import DCSBiosSender
+from install import check_dcs_bios, install_hook, is_hook_installed
 from overlay import CommandPalette
 from setup import (
     detect_dcs_install_dir,
@@ -364,6 +365,9 @@ class App:
         self.qapp = QApplication(sys.argv)
         self.qapp.setQuitOnLastWindowClosed(False)
 
+        # First-run setup (installs hook, offers DCS-BIOS)
+        self._first_run_setup()
+
         # Setup
         self.dcs_dir = _ensure_dcs_install_dir(self.qapp)
         if not self.dcs_dir:
@@ -395,7 +399,7 @@ class App:
 
         self._load_display_settings()
         self.usage = UsageTracker()
-        self.sender = DCSBiosSender()
+        self.sender = DCSBiosSender(host=cfg.DCS_BIOS_HOST, port=cfg.DCS_BIOS_PORT)
         self.state_reader = BiosStateReader()
         self.state_reader.start()
         self.palette: Optional[CommandPalette] = None
@@ -404,12 +408,145 @@ class App:
         # Clean up any leftover shutdown file
         self._cleanup_shutdown_file()
 
+    def _first_run_setup(self) -> None:
+        """On first run (no settings.json), guide the user through setup.
+
+        Installs the Lua hook and offers to install DCS-BIOS via Qt dialogs.
+        """
+        settings = _read_settings()
+        if settings.get("setup_complete"):
+            return
+
+        logger.info("First run detected, running setup wizard.")
+
+        QMessageBox.information(
+            None,
+            "DCS Command Palette - Welcome",
+            "Welcome to DCS Command Palette!\n\n"
+            "This appears to be the first launch. "
+            "The setup wizard will help you configure the palette.",
+        )
+
+        # Install Lua hook
+        if not is_hook_installed(DCS_SAVED_GAMES):
+            answer = QMessageBox.question(
+                None,
+                "Install Lua Hook",
+                "The Lua hook allows DCS to communicate with the palette.\n"
+                "It will be installed to:\n"
+                f"  {DCS_SAVED_GAMES}/Scripts/Hooks/\n\n"
+                "Install the Lua hook now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                palette_dir = PROJECT_DIR
+                if install_hook(palette_dir, DCS_SAVED_GAMES):
+                    QMessageBox.information(
+                        None,
+                        "Hook Installed",
+                        "Lua hook installed successfully.\n"
+                        "The palette will auto-start when you begin a DCS mission.",
+                    )
+                else:
+                    QMessageBox.warning(
+                        None,
+                        "Hook Installation Failed",
+                        "Could not install the Lua hook.\n"
+                        "You can install it later from Settings.",
+                    )
+        else:
+            logger.info("Lua hook already installed, skipping.")
+
+        # Check DCS-BIOS
+        if not check_dcs_bios(DCS_SAVED_GAMES):
+            answer = QMessageBox.question(
+                None,
+                "Install DCS-BIOS",
+                "DCS-BIOS is not installed.\n\n"
+                "DCS-BIOS provides cockpit control integration "
+                "(switches, dials, etc.).\n"
+                "Without it, only keyboard shortcuts will be available.\n\n"
+                "Download and install DCS-BIOS now?\n"
+                "(Requires internet connection, ~10 MB download)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                try:
+                    from bios_installer import (
+                        backup_scripts,
+                        download_zip,
+                        ensure_export_lua,
+                        get_latest_release_url,
+                        install_bios,
+                    )
+
+                    QMessageBox.information(
+                        None,
+                        "Downloading DCS-BIOS",
+                        "Downloading DCS-BIOS from GitHub...\n"
+                        "This may take a moment. Click OK to start.",
+                    )
+
+                    url, tag = get_latest_release_url()
+                    if url:
+                        zip_data = download_zip(url)
+                        if zip_data:
+                            backup_scripts(DCS_SAVED_GAMES)
+                            if install_bios(DCS_SAVED_GAMES, zip_data):
+                                ensure_export_lua(DCS_SAVED_GAMES)
+                                QMessageBox.information(
+                                    None,
+                                    "DCS-BIOS Installed",
+                                    f"DCS-BIOS {tag} installed successfully!",
+                                )
+                            else:
+                                QMessageBox.warning(
+                                    None,
+                                    "DCS-BIOS Error",
+                                    "Failed to extract DCS-BIOS.\n"
+                                    "You can install it later from Settings.",
+                                )
+                        else:
+                            QMessageBox.warning(
+                                None,
+                                "Download Failed",
+                                "Could not download DCS-BIOS.\n"
+                                "Check your internet connection and try again from Settings.",
+                            )
+                    else:
+                        QMessageBox.warning(
+                            None,
+                            "DCS-BIOS Error",
+                            "Could not find DCS-BIOS release.\n"
+                            "You can install it later from Settings.",
+                        )
+                except Exception as e:
+                    logger.exception("DCS-BIOS installation failed")
+                    QMessageBox.warning(
+                        None,
+                        "DCS-BIOS Error",
+                        f"Installation failed: {e}\n"
+                        "You can install DCS-BIOS later from Settings.",
+                    )
+        else:
+            logger.info("DCS-BIOS already installed, skipping.")
+
+        # Mark setup as complete
+        settings["setup_complete"] = True
+        from setup import _save_settings
+        _save_settings(settings)
+        logger.info("First-run setup complete.")
+
     @staticmethod
     def _load_display_settings() -> None:
         """Load display preferences from settings.json into config module."""
         settings = _read_settings()
         cfg.SHOW_IDENTIFIERS = bool(settings.get("show_identifiers", False))
         cfg.AUTO_HIDE_SECONDS = int(settings.get("auto_hide_seconds", 5))
+        cfg.DCS_BIOS_HOST = str(settings.get("dcs_bios_host", "127.0.0.1"))
+        cfg.DCS_BIOS_PORT = int(settings.get("dcs_bios_port", 7778))
 
     def _load_commands(self) -> None:
         """Load (or reload) commands for the current aircraft."""
@@ -480,6 +617,11 @@ class App:
     def _on_config_changed(self, new_dcs_dir: str, new_aircraft: str) -> None:
         """Called when the config window applies changes."""
         self._load_display_settings()
+        # Re-create sender with potentially updated BIOS host/port
+        self.sender.close()
+        self.sender = DCSBiosSender(host=cfg.DCS_BIOS_HOST, port=cfg.DCS_BIOS_PORT)
+        if self.palette:
+            self.palette._sender = self.sender
         changed = False
         if new_dcs_dir != self.dcs_dir:
             self.dcs_dir = new_dcs_dir
@@ -496,6 +638,7 @@ class App:
             current_dcs_dir=self.dcs_dir or "",
             current_aircraft=self.aircraft or "",
             on_aircraft_changed=self._on_config_changed,
+            bios_connected=self.state_reader.connected,
         )
         dialog.exec()
 
@@ -638,6 +781,23 @@ def _get_git_commit() -> str:
     return "unknown"
 
 
+def _ensure_single_instance() -> bool:
+    """Ensure only one instance of the palette is running.
+
+    Uses a Windows named mutex. Returns True if this is the only instance,
+    False if another is already running.
+    """
+    ERROR_ALREADY_EXISTS = 183
+    mutex_name = "DCSCommandPalette_SingleInstance_Mutex"
+    # CreateMutexW returns a handle; if the mutex already exists, GetLastError == 183
+    handle = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        return False
+    # Keep the handle alive for the lifetime of the process (it's freed on exit)
+    _ensure_single_instance._handle = handle  # type: ignore[attr-defined]
+    return True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="DCS Command Palette")
     parser.add_argument(
@@ -652,6 +812,11 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
+
+    if not _ensure_single_instance():
+        logger.warning("Another instance is already running. Exiting.")
+        sys.exit(0)
+
     logger.info("DCS Command Palette v%s (%s)", _get_version(), _get_git_commit())
 
     # Allow Ctrl+C to cleanly quit

@@ -128,12 +128,12 @@ class ResultItem(QWidget):  # type: ignore[misc]
         if bios_offline:
             self.combo_label.setText("BIOS offline")
             self.combo_label.setStyleSheet(
-                f"color: #664444; font-size: 10px; font-style: italic;"
+                f"color: #cc3333; font-size: 10px; font-style: italic;"
             )
         elif unbound:
             self.combo_label.setText("no key")
             self.combo_label.setStyleSheet(
-                f"color: #664444; font-size: 10px; font-style: italic;"
+                f"color: #cc3333; font-size: 10px; font-style: italic;"
             )
         else:
             self.combo_label.setText(cmd.key_combo if cmd.key_combo else "")

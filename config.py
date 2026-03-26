@@ -14,7 +14,34 @@ PALETTE_LISTEN_PORT: int = 7780
 
 # Paths
 PROJECT_DIR: str = os.path.dirname(os.path.abspath(__file__))
-DCS_SAVED_GAMES: str = os.path.dirname(PROJECT_DIR)
+
+
+def _detect_dcs_saved_games() -> str:
+    """Detect the DCS Saved Games directory.
+
+    Tries:
+    1. If we're already inside a DCS saved games dir, use it
+    2. Standard Windows paths
+    """
+    # Check if project is inside a DCS saved games dir
+    parent = os.path.dirname(PROJECT_DIR)
+    if os.path.isdir(os.path.join(parent, "Config")) or os.path.isdir(
+        os.path.join(parent, "Scripts")
+    ):
+        return parent
+
+    # Standard paths
+    userprofile = os.environ.get("USERPROFILE", "")
+    for name in ["DCS", "DCS.openbeta"]:
+        candidate = os.path.join(userprofile, "Saved Games", name)
+        if os.path.isdir(candidate):
+            return candidate
+
+    # Fallback to parent
+    return parent
+
+
+DCS_SAVED_GAMES: str = _detect_dcs_saved_games()
 USAGE_DATA_PATH: str = os.path.join(PROJECT_DIR, "usage_data.json")
 
 # DCS installation directory (default, overridden by settings.json at runtime)

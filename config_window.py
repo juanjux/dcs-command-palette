@@ -84,12 +84,14 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         current_dcs_dir: str,
         current_aircraft: str,
         on_aircraft_changed: object,
+        bios_connected: bool = False,
         parent: object = None,
     ) -> None:
         super().__init__(parent)  # type: ignore[arg-type]
         self._dcs_dir = current_dcs_dir
         self._aircraft = current_aircraft
         self._on_aircraft_changed = on_aircraft_changed
+        self._bios_connected = bios_connected
         self._setup_window()
         self._build_ui()
         self._populate()
@@ -241,6 +243,25 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._bios_install_status = QLabel()
         bios_layout.addWidget(self._bios_install_status)
 
+        self._bios_conn_status = QLabel()
+        bios_layout.addWidget(self._bios_conn_status)
+
+        self._bios_port_label = QLabel()
+        self._bios_port_label.setStyleSheet("font-size: 11px; color: gray;")
+        bios_layout.addWidget(self._bios_port_label)
+
+        ip_port_row = QHBoxLayout()
+        ip_port_row.addWidget(QLabel("DCS-BIOS IP:"))
+        self._bios_ip_edit = QLineEdit()
+        self._bios_ip_edit.setMaximumWidth(150)
+        ip_port_row.addWidget(self._bios_ip_edit)
+        ip_port_row.addWidget(QLabel("Port:"))
+        self._bios_port_edit = QLineEdit()
+        self._bios_port_edit.setMaximumWidth(80)
+        ip_port_row.addWidget(self._bios_port_edit)
+        ip_port_row.addStretch()
+        bios_layout.addLayout(ip_port_row)
+
         bios_btn_row = QHBoxLayout()
         self._install_bios_btn = QPushButton("Install / Update DCS-BIOS")
         self._install_bios_btn.clicked.connect(self._install_or_update_bios)
@@ -300,6 +321,17 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         self._pending_hotkey = str(settings.get("hotkey", "Ctrl+Space"))
         self._hotkey_label.setText(self._pending_hotkey)
+
+        # DCS-BIOS connection status
+        self._update_bios_connection()
+
+        # DCS-BIOS IP/port
+        self._bios_ip_edit.setText(str(settings.get("dcs_bios_host", "127.0.0.1")))
+        self._bios_port_edit.setText(str(settings.get("dcs_bios_port", 7778)))
+        port = settings.get("dcs_bios_port", 7778)
+        self._bios_port_label.setText(
+            f"Send port: {port} | Receive: multicast 239.255.50.10:5010"
+        )
 
     def _refresh_aircraft_list(self) -> None:
         self._aircraft_combo.blockSignals(True)
@@ -414,6 +446,14 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
             self._bios_install_status.setStyleSheet("color: orange; font-weight: bold;")
             self._install_bios_btn.setText("Install DCS-BIOS")
 
+    def _update_bios_connection(self) -> None:
+        if self._bios_connected:
+            self._bios_conn_status.setText("Connection: Connected (receiving state data)")
+            self._bios_conn_status.setStyleSheet("color: green; font-size: 11px;")
+        else:
+            self._bios_conn_status.setText("Connection: Not connected (start a DCS mission)")
+            self._bios_conn_status.setStyleSheet("color: orange; font-size: 11px;")
+
     def _install_or_update_bios(self) -> None:
         reply = QMessageBox.question(
             self,
@@ -523,6 +563,11 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         except ValueError:
             settings["auto_hide_seconds"] = 5
         settings["hotkey"] = self._pending_hotkey
+        settings["dcs_bios_host"] = self._bios_ip_edit.text().strip() or "127.0.0.1"
+        try:
+            settings["dcs_bios_port"] = int(self._bios_port_edit.text())
+        except ValueError:
+            settings["dcs_bios_port"] = 7778
         _save_settings(settings)
         logger.info("Settings saved: dcs_dir=%s, aircraft=%s, hotkey=%s",
                      self._dcs_dir, self._aircraft, self._pending_hotkey)

@@ -28,6 +28,9 @@ def build() -> None:
         "--noconfirm",  # Overwrite without asking
         # Include the Lua hook file as data
         "--add-data", f"dcs_command_palette_hook.lua{os.pathsep}.",
+        # Include installer modules so they're available at runtime
+        "--hidden-import", "install",
+        "--hidden-import", "bios_installer",
         # Hidden imports that PyInstaller might miss
         "--hidden-import", "pynput.keyboard._win32",
         "--hidden-import", "pynput.mouse._win32",
@@ -47,9 +50,9 @@ def build() -> None:
     print(f"\nBuild successful! Output: {DIST_DIR}")
     print("\nTo distribute:")
     print(f"  1. Copy the '{DIST_DIR}' folder to the target machine")
-    print("  2. Place it in: Saved Games\\DCS\\dcs-command-palette\\")
-    print("  3. Run dcs-command-palette.exe once to configure")
-    print("  4. Open Settings -> Install Lua Hook")
+    print("  2. Place it anywhere (no fixed location required)")
+    print("  3. Run dcs-command-palette.exe — first launch runs the setup wizard")
+    print("     (installs Lua hook and offers DCS-BIOS installation)")
 
 
 if __name__ == "__main__":
