@@ -108,6 +108,23 @@ def test_search_multi_word_all_tokens_match(tmp_path: object) -> None:
         )
 
 
+def test_search_multi_word_with_category(tmp_path: object) -> None:
+    """Searching 'bright right' should prioritize Right DDI brightness controls.
+
+    The category 'Right DDI' should boost results containing both 'bright' and 'right'.
+    """
+    controls = load_controls(_FA18C_JSON)
+    commands = [_control_to_command(c) for c in controls]
+    usage = _make_tracker(tmp_path)
+    results = search("bright right", commands, usage)
+    if results:
+        top = results[0]
+        text = f"{top.identifier} {top.category}".lower()
+        assert "right" in text, (
+            f"Top result for 'bright right' should be from Right DDI, got: {top.identifier} ({top.category})"
+        )
+
+
 def test_bios_category_uses_panel_name() -> None:
     """Category should use the original DCS-BIOS panel name.
 

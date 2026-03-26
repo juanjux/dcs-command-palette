@@ -103,7 +103,8 @@ def _enrich_position_labels(
     """
     # Build a map of description -> list of position names from keyboard entries
     directional = {"ccw", "cw", "up", "down", "pull", "stow", "pull/stow", "cycle",
-                    "toggle", "press", "release", "held left/down", "centered", "held right/up"}
+                    "toggle", "press", "release", "held left/down", "centered",
+                    "held right/up", "aug pull"}
     desc_positions: Dict[str, List[str]] = {}
     for entry in kb_entries:
         if " - " not in entry.name:
@@ -112,6 +113,16 @@ def _enrich_position_labels(
         if pos_name.lower() in directional:
             continue
         desc_positions.setdefault(base, []).append(pos_name)
+
+    def _normalize_for_match(s: str) -> str:
+        """Normalize a string for fuzzy base-name matching."""
+        return s.lower().replace("-", " ").replace("_", " ").strip()
+
+    # Build a normalized lookup for fuzzy matching
+    norm_to_bases: Dict[str, List[str]] = {}
+    for base_name in desc_positions:
+        norm = _normalize_for_match(base_name)
+        norm_to_bases.setdefault(norm, []).append(base_name)
 
     # Apply to BIOS commands that lack labels
     for cmd in commands:
@@ -122,23 +133,36 @@ def _enrich_position_labels(
         if cmd.max_value is None or cmd.max_value < 2:
             continue
 
-        # Try exact description match first, then try matching on identifier-derived name
-        # BIOS description: "RADAR Switch Change ,OFF/STBY/OPR/EMERG(PULL)"
-        # Keyboard base: "RADAR Switch"
-        # Also try: identifier "RADAR_SW" -> "RADAR Switch"
-        id_as_desc = cmd.identifier.replace("_SW", " Switch").replace("_", " ").title()
+        # Generate candidate names to try matching against keyboard base names:
+        # 1. Exact BIOS description
+        # 2. Identifier-derived name (RADAR_SW -> "Radar Switch")
+        # 3. Common variations
+        id_as_desc = cmd.identifier.replace("_SW", " Switch").replace("_KNOB", " Knob").replace("_", " ").title()
         candidates = [cmd.description, id_as_desc]
+
         positions = None
         for candidate in candidates:
+            # Exact match
             positions = desc_positions.get(candidate)
             if positions:
                 break
-            # Try prefix matching: find a key that starts with candidate or vice versa
-            if not positions:
-                for base_name, pos_list in desc_positions.items():
-                    if base_name.startswith(candidate) or candidate.startswith(base_name):
-                        positions = pos_list
-                        break
+
+            # Prefix matching (both directions)
+            for base_name, pos_list in desc_positions.items():
+                if base_name.startswith(candidate) or candidate.startswith(base_name):
+                    positions = pos_list
+                    break
+            if positions:
+                break
+
+            # Substring matching: BIOS desc is contained in keyboard base or vice versa
+            # e.g., "ECM Mode Switch" in "ALQ-165 ECM Mode Switch"
+            norm_cand = _normalize_for_match(candidate)
+            for base_name, pos_list in desc_positions.items():
+                norm_base = _normalize_for_match(base_name)
+                if norm_cand in norm_base or norm_base in norm_cand:
+                    positions = pos_list
+                    break
             if positions:
                 break
 

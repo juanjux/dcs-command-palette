@@ -243,9 +243,20 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             self._layout.addWidget(btn)
 
     def _on_position(self, pos: int) -> None:
-        if self.command:
-            self.action_requested.emit(self.command.identifier, str(pos))
-            self.close_requested.emit()
+        if not self.command:
+            return
+        # Visually update: highlight the selected button, dim the old one
+        for i, btn in enumerate(self._buttons):
+            is_new = (i == pos)
+            btn.setStyleSheet(self._make_btn_style(is_new))
+            if is_new and self._current_value != pos:
+                # Flash with a brief marker update
+                old_text = btn.text()
+                btn.setText(old_text.rstrip(" ◄") + " ◄")
+        self._current_value = pos
+        self.action_requested.emit(self.command.identifier, str(pos))
+        # Delay close so the user sees the selection
+        QTimer.singleShot(300, self.close_requested.emit)
 
     def _add_inc_dec(self, cmd: Command) -> None:
         row = QHBoxLayout()
@@ -291,7 +302,10 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             "QSlider::groove:horizontal { background: rgba(50,50,70,200); height: 8px; border-radius: 4px; }"
             "QSlider::handle:horizontal { background: #4a9eff; width: 16px; margin: -4px 0; border-radius: 8px; }"
         )
-        value_label = QLabel("0")
+        # Set slider to current BIOS value
+        initial = self._current_value if self._current_value is not None else 0
+        slider.setValue(initial)
+        value_label = QLabel(str(initial))
         value_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px; min-width: 50px;")
         value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -677,11 +691,12 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                     return True
 
                 if obj is self._search and self._results:
-                    # Move through results list
+                    # Move through results list (wrapping)
+                    n = len(self._results)
                     if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                        self._selected_index = max(self._selected_index - 1, 0)
+                        self._selected_index = (self._selected_index - 1) % n
                     else:
-                        self._selected_index = min(self._selected_index + 1, len(self._results) - 1)
+                        self._selected_index = (self._selected_index + 1) % n
                     self._update_results_display()
                     self._ensure_visible()
                 return True  # always consume Tab
