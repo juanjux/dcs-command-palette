@@ -210,21 +210,17 @@ class JoystickHotkeyListener:
         return True
 
     def _poll_loop(self) -> None:
-        from joystick_reader import poll_joystick_buttons
+        from joystick_reader import is_button_pressed
 
         was_pressed = False
         while self._running:
             try:
-                pressed_buttons = poll_joystick_buttons()
-                is_pressed = any(
-                    b.joy_id == self._joy_id and b.button == self._button
-                    for b in pressed_buttons
-                )
+                pressed = is_button_pressed(self._joy_id, self._button)
                 # Trigger on press edge (transition from not-pressed to pressed)
-                if is_pressed and not was_pressed:
+                if pressed and not was_pressed:
                     if callable(self._callback):
                         self._callback()  # type: ignore[operator]
-                was_pressed = is_pressed
+                was_pressed = pressed
             except Exception:
                 logger.exception("Joystick hotkey poll error")
             time.sleep(0.05)  # 50ms poll interval

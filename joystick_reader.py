@@ -1,78 +1,48 @@
-"""Simple Windows joystick reader using Win32 Multimedia API."""
+"""Joystick reader using pygame/SDL2 for broad device support.
+
+The Win32 Multimedia API (winmm) doesn't detect many modern joysticks
+(e.g., VKB, Virpil). SDL2 via pygame handles DirectInput and HID devices.
+"""
 from __future__ import annotations
 
-import ctypes
-import ctypes.wintypes
 import logging
+import os
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Win32 Multimedia Joystick API
-winmm = ctypes.windll.winmm
+# Suppress pygame welcome message
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
-MAXPNAMELEN = 32
-
-
-class JOYCAPS(ctypes.Structure):
-    _fields_ = [
-        ("wMid", ctypes.wintypes.WORD),
-        ("wPid", ctypes.wintypes.WORD),
-        ("szPname", ctypes.c_char * MAXPNAMELEN),
-        ("wXmin", ctypes.wintypes.UINT),
-        ("wXmax", ctypes.wintypes.UINT),
-        ("wYmin", ctypes.wintypes.UINT),
-        ("wYmax", ctypes.wintypes.UINT),
-        ("wZmin", ctypes.wintypes.UINT),
-        ("wZmax", ctypes.wintypes.UINT),
-        ("wNumButtons", ctypes.wintypes.UINT),
-        ("wPeriodMin", ctypes.wintypes.UINT),
-        ("wPeriodMax", ctypes.wintypes.UINT),
-        ("wRmin", ctypes.wintypes.UINT),
-        ("wRmax", ctypes.wintypes.UINT),
-        ("wUmin", ctypes.wintypes.UINT),
-        ("wUmax", ctypes.wintypes.UINT),
-        ("wVmin", ctypes.wintypes.UINT),
-        ("wVmax", ctypes.wintypes.UINT),
-        ("wCaps", ctypes.wintypes.UINT),
-        ("wMaxAxes", ctypes.wintypes.UINT),
-        ("wNumAxes", ctypes.wintypes.UINT),
-        ("wMaxButtons", ctypes.wintypes.UINT),
-        ("szRegKey", ctypes.c_char * MAXPNAMELEN),
-        ("szOEMVxD", ctypes.c_char * MAXPNAMELEN),
-    ]
+import pygame  # noqa: E402
 
 
-class JOYINFOEX(ctypes.Structure):
-    _fields_ = [
-        ("dwSize", ctypes.wintypes.DWORD),
-        ("dwFlags", ctypes.wintypes.DWORD),
-        ("dwXpos", ctypes.wintypes.DWORD),
-        ("dwYpos", ctypes.wintypes.DWORD),
-        ("dwZpos", ctypes.wintypes.DWORD),
-        ("dwRpos", ctypes.wintypes.DWORD),
-        ("dwUpos", ctypes.wintypes.DWORD),
-        ("dwVpos", ctypes.wintypes.DWORD),
-        ("dwButtons", ctypes.wintypes.DWORD),
-        ("dwButtonNumber", ctypes.wintypes.DWORD),
-        ("dwPOV", ctypes.wintypes.DWORD),
-        ("dwReserved1", ctypes.wintypes.DWORD),
-        ("dwReserved2", ctypes.wintypes.DWORD),
-    ]
+_initialized = False
 
 
-JOYERR_NOERROR = 0
-JOY_RETURNBUTTONS = 0x00000080
-JOY_RETURNALL = 0x000000FF
+def _ensure_init() -> None:
+    """Initialize pygame joystick subsystem (only once)."""
+    global _initialized
+    if not _initialized:
+        pygame.init()
+        pygame.joystick.init()
+        _initialized = True
+        logger.debug("pygame joystick subsystem initialized")
 
-MAX_JOYSTICKS = 16
+
+def shutdown() -> None:
+    """Clean up pygame resources."""
+    global _initialized
+    if _initialized:
+        pygame.joystick.quit()
+        pygame.quit()
+        _initialized = False
 
 
 @dataclass
 class JoystickButton:
     """A detected joystick button press."""
-
     joy_id: int
     joy_name: str
     button: int  # 0-based button number
@@ -80,34 +50,47 @@ class JoystickButton:
 
 def get_joystick_names() -> Dict[int, str]:
     """Get names of all connected joysticks."""
+    _ensure_init()
     names: Dict[int, str] = {}
-    caps = JOYCAPS()
-    for joy_id in range(MAX_JOYSTICKS):
-        result = winmm.joyGetDevCapsA(
-            joy_id, ctypes.byref(caps), ctypes.sizeof(JOYCAPS)
-        )
-        if result == JOYERR_NOERROR:
-            name = caps.szPname.decode("ascii", errors="replace").strip("\x00")
-            names[joy_id] = name if name else f"Joystick {joy_id}"
+    count = pygame.joystick.get_count()
+    for i in range(count):
+        try:
+            js = pygame.joystick.Joystick(i)
+            js.init()
+            names[i] = js.get_name()
+        except pygame.error:
+            names[i] = f"Joystick {i}"
     return names
 
 
 def poll_joystick_buttons() -> List[JoystickButton]:
     """Poll all joysticks and return any currently pressed buttons."""
-    results: List[JoystickButton] = []
-    names = get_joystick_names()
-    info = JOYINFOEX()
-    info.dwSize = ctypes.sizeof(JOYINFOEX)
-    info.dwFlags = JOY_RETURNBUTTONS
+    _ensure_init()
+    # Must pump events for SDL to update joystick state
+    pygame.event.pump()
 
-    for joy_id, joy_name in names.items():
-        err = winmm.joyGetPosEx(joy_id, ctypes.byref(info))
-        if err != JOYERR_NOERROR:
+    results: List[JoystickButton] = []
+    count = pygame.joystick.get_count()
+    for i in range(count):
+        try:
+            js = pygame.joystick.Joystick(i)
+            js.init()
+            name = js.get_name()
+            for btn in range(js.get_numbuttons()):
+                if js.get_button(btn):
+                    results.append(JoystickButton(joy_id=i, joy_name=name, button=btn))
+        except pygame.error:
             continue
-        buttons = info.dwButtons
-        for btn in range(32):
-            if buttons & (1 << btn):
-                results.append(
-                    JoystickButton(joy_id=joy_id, joy_name=joy_name, button=btn)
-                )
     return results
+
+
+def is_button_pressed(joy_id: int, button: int) -> bool:
+    """Check if a specific joystick button is currently pressed."""
+    _ensure_init()
+    pygame.event.pump()
+    try:
+        js = pygame.joystick.Joystick(joy_id)
+        js.init()
+        return bool(js.get_button(button))
+    except (pygame.error, IndexError):
+        return False

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.13"
 dependencies = [
+    "pygame>=2.6.0",
     "pynput>=1.8.1",
     "pyqt6>=6.10.2",
     "rapidfuzz>=3.13.0",
@@ -23,5 +24,5 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["pynput.*", "PyQt6.*"]
+module = ["pynput.*", "PyQt6.*", "pygame.*"]
 ignore_missing_imports = true
