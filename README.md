@@ -5,22 +5,14 @@ A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by def
 ## Features
 
 - **Fuzzy search** across all DCS-BIOS controls and keyboard shortcuts (powered by RapidFuzz)
-- **Works in fullscreen DCS** -- uses a Win32 low-level keyboard hook (`WH_KEYBOARD_LL`) that intercepts keys before DCS sees them
 - **HOTAS button support** -- bind the palette toggle to any joystick button (e.g. `Joy0_Button3`)
-- **Auto-starts/stops with DCS missions** via a Lua hook that detects simulation start/stop
+- **Auto-starts/stops with DCS** via a Lua hook that detects simulation start/stop
 - **Live cockpit state** from DCS-BIOS -- shows current switch positions in the palette
-- **User keybind support** -- reads `Keyboard.diff.lua` customizations on top of default aircraft bindings
-- **Smart search ranking** -- combines fuzzy match score, usage frequency, and recency (configurable weights)
-- **Multi-word matching** and category search (e.g. type "fuel" to see all fuel-related controls)
-- **Sub-menus** for multi-position switches, dials, and sliders with current state highlighted
-- **System tray integration** with show/change aircraft/settings/quit actions
 - **Built-in DCS-BIOS installer** in the settings dialog
-- **Auto-hide** -- palette disappears after a configurable timeout
 
 ## Requirements
 
 - DCS World (Steam or standalone)
-- Python 3.13+ (for development) or standalone `.exe`
 - DCS-BIOS (can be installed from the Settings dialog)
 
 ## Installation
@@ -33,11 +25,11 @@ A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by def
 4. Open Settings -> Install Lua Hook
 5. (Optional) Open Settings -> Install/Update DCS-BIOS
 
-### From Source
+### From Source (for devs)
 
 ```bash
 cd "Saved Games\DCS"
-git clone <repo> dcs-command-palette
+git clone https://github.com/juanjux/dcs-command-palette
 cd dcs-command-palette
 python -m venv .venv
 .venv\Scripts\pip install -e .
@@ -48,6 +40,7 @@ The Lua hook (`dcs_command_palette_hook.lua`) will automatically find either the
 
 ## Usage
 
+- Once installed, DCS-Palette should start with the simulation and automatically stop when exiting it.
 - **Ctrl+Space** (default): Toggle the command palette
 - Type to search, **Up/Down/Tab** to navigate, **Enter** to execute
 - **Escape**: Close palette or go back from a sub-menu
@@ -75,51 +68,12 @@ Open Settings from the palette (search "settings") or from the system tray icon.
 - **Lua Hook**: Install/uninstall the DCS hook from Settings
 - **DCS-BIOS**: Install or update DCS-BIOS from Settings
 
-## How It Works
 
-1. **Keyboard shortcuts** are parsed from DCS Lua input files in three layers: common defaults, aircraft-specific defaults, and user customizations (`Keyboard.diff.lua`)
-2. **DCS-BIOS controls** are parsed from the JSON definition files in `Saved Games\DCS\Scripts\DCS-BIOS\doc\json\`
-3. **Live cockpit state** is read via DCS-BIOS UDP multicast (`239.255.50.10:5010`)
-4. **Commands are sent** via DCS-BIOS UDP (port `7778`) or keyboard simulation (pynput)
-5. **The Lua hook** (`Scripts/Hooks/dcs_command_palette_hook.lua`) starts the palette on mission start with the current aircraft type, and writes a `.shutdown` file on mission stop
-6. **The palette listens** on UDP port `7780` for `TOGGLE_PALETTE` messages from the hook
+## Reporting bugs
 
-### Search Ranking
+Run the .exe or .py (if using the source distribution) with the `--debug` parameter. Try to reproduce the issue and create and
+issue on https://github.com/juanjux/dcs-command-palette/issues attaching the dcs_command_palette.log on your `C:\Users\YOURUSER\Saved Games\DCS\dcs-command-palette` directory.
 
-Results are ranked using a weighted combination of:
-- Fuzzy match score (60%)
-- Usage frequency (25%)
-- Recency of last use (15%)
-
-Prefix matches get a bonus. Weights are configurable in `config.py`.
-
-## Development
-
-```bash
-# Run tests
-.venv\Scripts\python -m pytest tests/ -v
-
-# Type checking
-.venv\Scripts\python -m mypy *.py
-
-# Run with debug logging
-.venv\Scripts\python main.py --debug
-
-# Run with a specific aircraft (bypasses interactive selection)
-.venv\Scripts\python main.py --aircraft FA-18C_hornet
-```
-
-### Dependencies
-
-- **PyQt6** -- overlay UI, system tray, settings dialog
-- **RapidFuzz** -- fuzzy string matching
-- **pynput** -- keyboard simulation for executing key-bound commands
-- **pygame** -- joystick/HOTAS button reading
-
-### Dev Dependencies
-
-- **pytest** -- test framework
-- **mypy** -- static type checking (strict mode)
 
 ## Supported Aircraft
 
