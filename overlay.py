@@ -620,7 +620,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return ""
         value = self._state_reader.get_value(cmd.output_address, cmd.output_mask, cmd.output_shift)
         if cmd.position_labels and value in cmd.position_labels:
-            return f"Current: {cmd.position_labels[value]} ({value})"
+            return f"Current: {cmd.position_labels[value]}"
         return f"Current: {value}"
 
     def _show_submenu(self, cmd: Command) -> None:
