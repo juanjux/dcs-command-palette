@@ -7,8 +7,10 @@ import os
 import sys
 from typing import List, Optional
 
+import re
 import socket
 import threading
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal  # type: ignore[import-untyped]
 from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
@@ -169,6 +171,66 @@ class UDPToggleListener:
     def stop(self) -> None:
         self._running = False
         self._sock.close()
+
+
+class JoystickHotkeyListener:
+    """Polls for a specific joystick button press to toggle the palette.
+
+    Only active when the configured hotkey starts with "Joy" (e.g. "Joy0_Button3").
+    """
+
+    _JOY_RE = re.compile(r"^Joy(\d+)_Button(\d+)$")
+
+    def __init__(self, hotkey: str, callback: object) -> None:
+        self._callback = callback
+        self._joy_id: int = -1
+        self._button: int = -1
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+        match = self._JOY_RE.match(hotkey)
+        if match:
+            self._joy_id = int(match.group(1))
+            self._button = int(match.group(2))
+
+    @property
+    def is_joystick_hotkey(self) -> bool:
+        return self._joy_id >= 0
+
+    def start(self) -> bool:
+        if not self.is_joystick_hotkey:
+            return False
+        self._running = True
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+        logger.info(
+            "Joystick hotkey listener started for Joy%d Button%d",
+            self._joy_id, self._button,
+        )
+        return True
+
+    def _poll_loop(self) -> None:
+        from joystick_reader import poll_joystick_buttons
+
+        was_pressed = False
+        while self._running:
+            try:
+                pressed_buttons = poll_joystick_buttons()
+                is_pressed = any(
+                    b.joy_id == self._joy_id and b.button == self._button
+                    for b in pressed_buttons
+                )
+                # Trigger on press edge (transition from not-pressed to pressed)
+                if is_pressed and not was_pressed:
+                    if callable(self._callback):
+                        self._callback()  # type: ignore[operator]
+                was_pressed = is_pressed
+            except Exception:
+                logger.exception("Joystick hotkey poll error")
+            time.sleep(0.05)  # 50ms poll interval
+
+    def stop(self) -> None:
+        self._running = False
 
 
 def _ensure_dcs_install_dir(app: QApplication) -> Optional[str]:
@@ -459,15 +521,28 @@ class App:
         )
         udp_listener.start()
 
+        # Read configured hotkey
+        settings = _read_settings()
+        configured_hotkey = str(settings.get("hotkey", "Ctrl+Space"))
+
+        # Joystick hotkey listener (if hotkey is a joystick button)
+        joy_listener = JoystickHotkeyListener(
+            configured_hotkey, lambda: bridge.triggered.emit(),
+        )
+        if joy_listener.is_joystick_hotkey:
+            joy_listener.start()
+
         # Low-level keyboard hook (works even when DCS has focus)
         kb_hook = LowLevelKeyboardHook(lambda: bridge.triggered.emit())
-        if not kb_hook.install():
-            logger.warning("Falling back to RegisterHotKey (won't work in fullscreen DCS)")
-            ctypes.windll.user32.RegisterHotKey(None, 1, 0x0002 | 0x4000, VK_SPACE)
+        if not joy_listener.is_joystick_hotkey:
+            if not kb_hook.install():
+                logger.warning("Falling back to RegisterHotKey (won't work in fullscreen DCS)")
+                ctypes.windll.user32.RegisterHotKey(None, 1, 0x0002 | 0x4000, VK_SPACE)
 
         # System tray
         tray = QSystemTrayIcon()
-        tray.setToolTip("DCS Command Palette (Ctrl+Space)")
+        hotkey_display = configured_hotkey
+        tray.setToolTip(f"DCS Command Palette ({hotkey_display})")
         tray_menu = QMenu()
         show_action = tray_menu.addAction("Show Palette")
         show_action.triggered.connect(self.palette.show_palette)
@@ -491,10 +566,11 @@ class App:
         shutdown_timer.timeout.connect(self._check_shutdown)
         shutdown_timer.start(2000)
 
-        logger.info("DCS Command Palette running. Press Ctrl+Space to open.")
+        logger.info("DCS Command Palette running. Press %s to open.", configured_hotkey)
 
         ret = self.qapp.exec()
 
+        joy_listener.stop()
         kb_hook.uninstall()
         udp_listener.stop()
         self._cleanup_shutdown_file()

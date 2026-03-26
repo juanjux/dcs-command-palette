@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from typing import Optional
 
-from PyQt6.QtCore import Qt  # type: ignore[import-untyped]
+from PyQt6.QtCore import Qt, QTimer  # type: ignore[import-untyped]
 from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QCheckBox,
     QComboBox,
@@ -546,12 +546,39 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
         )
 
         layout = QVBoxLayout(self)
-        self._label = QLabel("Press the desired key combination...\n\n(Press Escape to cancel)")
+        self._label = QLabel(
+            "Press a key combination or joystick button...\n\n"
+            "(Press Escape to cancel)"
+        )
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setStyleSheet("font-size: 14px; padding: 16px;")
         layout.addWidget(self._label)
 
         self._modifiers: list[str] = []
+
+        # Start joystick polling timer
+        self._joy_timer = QTimer(self)
+        self._joy_timer.timeout.connect(self._poll_joystick)
+        self._joy_timer.start(100)
+
+    def _poll_joystick(self) -> None:
+        """Check for joystick button presses."""
+        try:
+            from joystick_reader import poll_joystick_buttons
+        except Exception:
+            # If joystick_reader fails to import (e.g. not on Windows), just skip
+            self._joy_timer.stop()
+            return
+
+        pressed = poll_joystick_buttons()
+        if pressed:
+            btn = pressed[0]  # Take the first pressed button
+            self.captured_combo = f"Joy{btn.joy_id}_Button{btn.button}"
+            self._label.setText(
+                f"Captured: {self.captured_combo}\n({btn.joy_name})"
+            )
+            self._joy_timer.stop()
+            QTimer.singleShot(400, self.accept)
 
     def keyPressEvent(self, event: object) -> None:
         from PyQt6.QtGui import QKeyEvent  # type: ignore[import-untyped]
@@ -562,6 +589,7 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
 
         # Escape cancels
         if key == Qt.Key.Key_Escape:
+            self._joy_timer.stop()
             self.reject()
             return
 
@@ -592,9 +620,12 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
         if parts:
             self.captured_combo = "+".join(parts)
             self._label.setText(f"Captured: {self.captured_combo}")
-            # Small delay so user sees what was captured
-            from PyQt6.QtCore import QTimer  # type: ignore[import-untyped]
+            self._joy_timer.stop()
             QTimer.singleShot(400, self.accept)
+
+    def reject(self) -> None:
+        self._joy_timer.stop()
+        super().reject()
 
 
 def _qt_key_to_name(key: int) -> str:
