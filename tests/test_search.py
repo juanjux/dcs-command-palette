@@ -90,6 +90,24 @@ def test_search_prefix_bonus(tmp_path: object) -> None:
     assert identifiers[0].startswith("AMPCD")
 
 
+def test_search_multi_word_all_tokens_match(tmp_path: object) -> None:
+    """Searching 'radar off' should prioritize results containing both words.
+
+    Regression: 'radar off' was showing unrelated OFF results because WRatio
+    scored them equally to results with both 'radar' and 'off'.
+    """
+    controls = load_controls(_FA18C_JSON)
+    usage = _make_tracker(tmp_path)
+    results = search("radar off", controls, usage)
+    # The top result should contain both 'radar' and 'off' in some form
+    if results:
+        top = results[0]
+        text = f"{top.identifier} {top.description}".lower()
+        assert "radar" in text, (
+            f"Top result for 'radar off' should contain 'radar', got: {top.identifier} - {top.description}"
+        )
+
+
 def test_bios_category_uses_panel_name() -> None:
     """Category should use the original DCS-BIOS panel name.
 

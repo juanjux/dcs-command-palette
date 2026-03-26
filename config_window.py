@@ -119,6 +119,14 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._show_ids_checkbox = QCheckBox("Show DCS-BIOS identifiers (e.g., FLAP_SW) below command names")
         display_layout.addWidget(self._show_ids_checkbox)
 
+        autohide_row = QHBoxLayout()
+        autohide_row.addWidget(QLabel("Auto-hide after inactivity (seconds, 0 = disabled):"))
+        self._autohide_edit = QLineEdit()
+        self._autohide_edit.setMaximumWidth(60)
+        autohide_row.addWidget(self._autohide_edit)
+        autohide_row.addStretch()
+        display_layout.addLayout(autohide_row)
+
         layout.addWidget(display_group)
 
         # --- Lua Hook ---
@@ -183,6 +191,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         settings = _read_settings()
         self._show_ids_checkbox.setChecked(bool(settings.get("show_identifiers", False)))
+        self._autohide_edit.setText(str(settings.get("auto_hide_seconds", 5)))
 
     def _refresh_aircraft_list(self) -> None:
         self._aircraft_combo.blockSignals(True)
@@ -292,6 +301,10 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         settings["dcs_install_dir"] = self._dcs_dir
         settings["aircraft"] = self._aircraft
         settings["show_identifiers"] = self._show_ids_checkbox.isChecked()
+        try:
+            settings["auto_hide_seconds"] = int(self._autohide_edit.text())
+        except ValueError:
+            settings["auto_hide_seconds"] = 5
         _save_settings(settings)
         logger.info("Settings saved: dcs_dir=%s, aircraft=%s", self._dcs_dir, self._aircraft)
 

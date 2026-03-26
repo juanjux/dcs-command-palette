@@ -312,6 +312,7 @@ class App:
         """Load display preferences from settings.json into config module."""
         settings = _read_settings()
         cfg.SHOW_IDENTIFIERS = bool(settings.get("show_identifiers", False))
+        cfg.AUTO_HIDE_SECONDS = int(settings.get("auto_hide_seconds", 5))
 
     def _load_commands(self) -> None:
         """Load (or reload) commands for the current aircraft."""

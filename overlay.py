@@ -132,6 +132,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
     def set_command(self, cmd: Command, sender: DCSBiosSender) -> None:
         self.command = cmd
         self._sender = sender
+        self._buttons: List[QPushButton] = []
         self._clear()
 
         header = QLabel(f"  {cmd.identifier} - {cmd.description}")
@@ -152,6 +153,10 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
 
         if cmd.control_type in ("limited_dial", "analog_dial") and cmd.max_value is not None:
             self._add_slider(cmd)
+
+        # Focus the first button so Enter/arrows work immediately
+        if self._buttons:
+            self._buttons[0].setFocus()
 
     def _clear(self) -> None:
         while self._layout.count():
@@ -178,11 +183,10 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
                 f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
                 f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
                 f"padding: 8px 16px; text-align: left; font-size: 13px; }}"
-                f"QPushButton:hover {{ background: rgba(60,120,220,120); }}"
+                f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
             )
-            pos_val = pos
-            btn.clicked.connect(lambda checked: None, lambda checked, p=pos_val: self._on_position(p))
-            btn.clicked.connect(lambda checked, p=pos_val: self._on_position(p))
+            btn.clicked.connect(lambda checked, p=pos: self._on_position(p))
+            self._buttons.append(btn)
             self._layout.addWidget(btn)
 
     def _on_position(self, pos: int) -> None:
@@ -201,7 +205,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
                 f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
                 f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
                 f"padding: 8px 24px; font-size: 13px; font-weight: bold; }}"
-                f"QPushButton:hover {{ background: rgba(60,120,220,120); }}"
+                f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
             )
 
         if cmd.has_variable_step and cmd.suggested_step:
@@ -220,6 +224,8 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
                 lambda: self.action_requested.emit(cmd.identifier, "INC")
             )
 
+        self._buttons.append(dec_btn)
+        self._buttons.append(inc_btn)
         row.addWidget(dec_btn)
         row.addWidget(inc_btn)
         self._layout.addLayout(row)
@@ -305,6 +311,11 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
         self._fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
 
+        # Auto-hide timer
+        self._inactivity_timer = QTimer()
+        self._inactivity_timer.setSingleShot(True)
+        self._inactivity_timer.timeout.connect(self.hide_palette)
+
     def _setup_window(self) -> None:
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint
@@ -368,6 +379,13 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         self._item_widgets: List[ResultItem] = []
 
+    def _restart_inactivity_timer(self) -> None:
+        timeout = cfg.AUTO_HIDE_SECONDS
+        if timeout > 0:
+            self._inactivity_timer.start(timeout * 1000)
+        else:
+            self._inactivity_timer.stop()
+
     def show_palette(self) -> None:
         self._in_submenu = False
         self._submenu.hide()
@@ -377,6 +395,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._selected_index = 0
 
         self._on_search_changed("")
+        self._restart_inactivity_timer()
 
         screen = QApplication.primaryScreen()
         if screen:
@@ -414,6 +433,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._results = search(text, self._commands, self._usage)
         self._selected_index = 0
         self._update_results_display()
+        self._restart_inactivity_timer()
 
     def _update_results_display(self) -> None:
         while self._results_layout.count() > 0:
@@ -467,6 +487,18 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                 self.hide_palette()
                 # Small delay so the overlay hides before keys are sent to DCS
                 QTimer.singleShot(150, lambda: send_key_combo(cmd.key_combo))
+            else:
+                # No keybinding assigned — flash the search bar to indicate
+                self._search.setStyleSheet(
+                    f"QLineEdit {{ color: #ff6666; "
+                    f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
+                    f"border: none; border-bottom: 1px solid #ff4444; "
+                    f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
+                    f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+                )
+                self._search.setText("No keybinding assigned for this command")
+                self._search.setReadOnly(True)
+                QTimer.singleShot(1500, self._reset_search_style)
             return
 
         # DCS-BIOS: simple toggle (max_value <= 1)
@@ -523,6 +555,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
         key = event.key()
+        self._restart_inactivity_timer()
 
         if key == Qt.Key.Key_Escape:
             if self._in_submenu:
@@ -554,6 +587,19 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return
 
         super().keyPressEvent(event)
+
+    def _reset_search_style(self) -> None:
+        """Reset search bar to normal style after error flash."""
+        self._search.setStyleSheet(
+            f"QLineEdit {{ color: {TEXT_COLOR}; "
+            f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
+            f"border: none; border-bottom: 1px solid rgba(80,80,120,150); "
+            f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
+            f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+        )
+        self._search.setReadOnly(False)
+        self._search.clear()
+        self._search.setFocus()
 
     def _ensure_visible(self) -> None:
         if self._selected_index < len(self._item_widgets):

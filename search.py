@@ -56,7 +56,9 @@ def search(
         limit=MAX_RESULTS * 3,
     )
 
-    query_lower = query.lower().replace(" ", "_")
+    query_lower = query.lower()
+    query_words = query_lower.split()
+    query_as_id = query_lower.replace(" ", "_")
     scored_results: List[Tuple[float, Command]] = []
     for _match_text, fuzzy_score, idx in results:
         cmd = commands[idx]
@@ -69,8 +71,14 @@ def search(
             + WEIGHT_RECENCY * rec
         )
 
-        if cmd.identifier.lower().startswith(query_lower):
+        if cmd.identifier.lower().startswith(query_as_id):
             final += PREFIX_MATCH_BONUS
+
+        # Bonus when ALL query words appear in the search text.
+        # This prevents "radar off" from matching "master arm off" equally.
+        if len(query_words) > 1:
+            if all(w in cmd.search_text for w in query_words):
+                final += 15
 
         scored_results.append((final, cmd))
 

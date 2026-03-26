@@ -47,6 +47,7 @@ DESCRIPTION_FONT_SIZE: int = 12
 
 # Display options
 SHOW_IDENTIFIERS: bool = False  # Show DCS-BIOS identifiers below the description
+AUTO_HIDE_SECONDS: int = 5  # Hide palette after N seconds of inactivity (0 = disabled)
 
 # Search ranking weights
 WEIGHT_FUZZY: float = 0.60
