@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QWidget,
 )
 
+import ctypes
+
 from commands import Command, CommandSource
 import config as cfg
 from config import (
@@ -161,8 +163,12 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             self._add_string_input(cmd)
             return
 
-        if cmd.position_labels and cmd.max_value is not None and cmd.max_value <= 10:
-            self._add_position_buttons(cmd)
+        if cmd.max_value is not None and cmd.max_value <= 10:
+            if cmd.position_labels:
+                self._add_position_buttons(cmd)
+            elif cmd.max_value > 1:
+                # Selector without named positions — show generic buttons
+                self._add_generic_positions(cmd)
 
         if cmd.has_fixed_step or cmd.has_variable_step:
             self._add_inc_dec(cmd)
@@ -195,6 +201,22 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             return
         for pos, label in sorted(cmd.position_labels.items()):
             btn = QPushButton(f"  {pos} - {label}")
+            btn.setStyleSheet(
+                f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
+                f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
+                f"padding: 8px 16px; text-align: left; font-size: 13px; }}"
+                f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
+            )
+            btn.clicked.connect(lambda checked, p=pos: self._on_position(p))
+            self._buttons.append(btn)
+            self._layout.addWidget(btn)
+
+    def _add_generic_positions(self, cmd: Command) -> None:
+        """Add numbered position buttons for selectors without named labels."""
+        if cmd.max_value is None:
+            return
+        for pos in range(cmd.max_value + 1):
+            btn = QPushButton(f"  Position {pos}")
             btn.setStyleSheet(
                 f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
                 f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
@@ -395,6 +417,19 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         self._item_widgets: List[ResultItem] = []
 
+    def _force_focus(self) -> None:
+        """Force the palette window to the foreground and focus the search box.
+
+        Uses Win32 SetForegroundWindow to steal focus from DCS.
+        """
+        self.activateWindow()
+        self.raise_()
+        hwnd = int(self.winId())
+        if hwnd:
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+        self._search.setFocus()
+        self._search.activateWindow()
+
     def _restart_inactivity_timer(self) -> None:
         timeout = cfg.AUTO_HIDE_SECONDS
         if timeout > 0:
@@ -425,6 +460,9 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self.activateWindow()
         self.raise_()
         self._search.setFocus()
+        # Aggressive focus grab — needed when DCS has focus
+        QTimer.singleShot(50, self._force_focus)
+        QTimer.singleShot(150, self._force_focus)
 
         self._fade_anim.stop()
         self._fade_anim.setDuration(100)
@@ -553,6 +591,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
     def _on_submenu_action(self, identifier: str, argument: str) -> None:
         self._sender.send(identifier, argument)
+        self._restart_inactivity_timer()
 
     def _close_submenu_and_hide(self) -> None:
         self._in_submenu = False
@@ -581,6 +620,16 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return
 
         if self._in_submenu:
+            # Enter/Return activates the focused button in the submenu
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                focused = QApplication.focusWidget()
+                if isinstance(focused, QPushButton):
+                    focused.click()
+                    return
+            # Tab/Shift+Tab cycles through submenu buttons
+            if key == Qt.Key.Key_Tab:
+                self._submenu_navigate(reverse=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+                return
             super().keyPressEvent(event)
             return
 
@@ -598,11 +647,38 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                 self._ensure_visible()
             return
 
+        # Tab/Shift+Tab also navigate results (like Down/Up)
+        if key == Qt.Key.Key_Tab:
+            if self._results:
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    self._selected_index = max(self._selected_index - 1, 0)
+                else:
+                    self._selected_index = min(self._selected_index + 1, len(self._results) - 1)
+                self._update_results_display()
+                self._ensure_visible()
+            return
+
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._execute_selected()
             return
 
         super().keyPressEvent(event)
+
+    def _submenu_navigate(self, reverse: bool = False) -> None:
+        """Cycle focus through submenu buttons with Tab/Shift+Tab."""
+        buttons = self._submenu._buttons
+        if not buttons:
+            return
+        focused = QApplication.focusWidget()
+        try:
+            idx = buttons.index(focused)  # type: ignore[arg-type]
+        except ValueError:
+            idx = -1
+        if reverse:
+            idx = (idx - 1) % len(buttons)
+        else:
+            idx = (idx + 1) % len(buttons)
+        buttons[idx].setFocus()
 
     def _reset_search_style(self) -> None:
         """Reset search bar to normal style after error flash."""
