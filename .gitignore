@@ -12,6 +12,8 @@ wheels/
 # Runtime data
 usage_data.json
 settings.json
+*.log
+.shutdown
 
 # Test/lint caches
 .pytest_cache/

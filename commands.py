@@ -1,12 +1,13 @@
 """Unified command abstraction for both DCS-BIOS controls and keyboard shortcuts."""
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from config import AIRCRAFT_INPUT_NAME, AIRCRAFT_MODULE, DCS_INSTALL_DIR
+from config import AIRCRAFT_INPUT_NAME, AIRCRAFT_MODULE, DCS_INSTALL_DIR, DCS_SAVED_GAMES
 from controls import Control, load_controls
 from keyboard_commands import KeyboardEntry, load_keyboard_entries
 
@@ -84,20 +85,35 @@ def load_all_commands(
     dcs_install_dir: str = DCS_INSTALL_DIR,
     aircraft_module: str = AIRCRAFT_MODULE,
     aircraft_input_name: str = AIRCRAFT_INPUT_NAME,
+    dcs_saved_games: str = DCS_SAVED_GAMES,
+    aircraft_saved_name: Optional[str] = None,
+    controls_json_path: Optional[str] = None,
 ) -> List[Command]:
-    """Load all commands from both DCS-BIOS and keyboard shortcuts."""
+    """Load all commands from both DCS-BIOS and keyboard shortcuts.
+
+    Args:
+        dcs_install_dir: Path to DCS World installation.
+        aircraft_module: Module folder name (e.g. "FA-18C").
+        aircraft_input_name: Input subfolder name (e.g. "FA-18C").
+        dcs_saved_games: Path to DCS Saved Games folder.
+        aircraft_saved_name: Saved games folder name for user keybinds (e.g. "FA-18C_hornet").
+        controls_json_path: Path to the DCS-BIOS JSON file for this aircraft. If None, skips BIOS controls.
+    """
     commands: List[Command] = []
 
     # DCS-BIOS controls
-    bios_controls = load_controls()
-    for ctrl in bios_controls:
-        commands.append(_control_to_command(ctrl))
+    if controls_json_path and os.path.exists(controls_json_path):
+        bios_controls = load_controls(controls_json_path)
+        for ctrl in bios_controls:
+            commands.append(_control_to_command(ctrl))
 
-    # Keyboard shortcuts from DCS install directory
+    # Keyboard shortcuts from DCS install directory + user customizations
     kb_entries = load_keyboard_entries(
         dcs_install_dir=dcs_install_dir,
         aircraft_module=aircraft_module,
         aircraft_input_name=aircraft_input_name,
+        dcs_saved_games=dcs_saved_games,
+        aircraft_saved_name=aircraft_saved_name,
     )
     for entry in kb_entries:
         commands.append(_entry_to_command(entry))

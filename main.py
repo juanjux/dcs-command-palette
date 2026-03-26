@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import ctypes
+import logging
+import os
 import sys
 from typing import List, Optional
 
@@ -10,19 +13,24 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
 )
 
 from commands import Command, CommandSource, load_all_commands
-from config import DCS_BIOS_HOST, DCS_BIOS_PORT
+from config import DCS_BIOS_HOST, DCS_BIOS_PORT, DCS_SAVED_GAMES, PROJECT_DIR
 from dcs_bios import DCSBiosSender
 from overlay import CommandPalette
 from setup import (
     detect_dcs_install_dir,
+    find_bios_json,
     get_aircraft_input_name,
+    get_aircraft_saved_name,
     get_selected_aircraft,
     list_installed_aircraft,
     save_dcs_install_dir,
     save_selected_aircraft,
     _read_settings,
 )
+from logging_config import setup_logging
 from usage_tracker import UsageTracker
+
+logger = logging.getLogger(__name__)
 
 # Win32 constants
 MOD_CTRL = 0x0002
@@ -84,7 +92,7 @@ def _ensure_aircraft(dcs_dir: str) -> Optional[str]:
 
     aircraft_list = list_installed_aircraft(dcs_dir)
     if not aircraft_list:
-        print("WARNING: No aircraft found.")
+        logger.warning("No aircraft found.")
         return None
 
     # Default to FA-18C if available
@@ -129,22 +137,31 @@ def _add_palette_commands(commands: List[Command]) -> List[Command]:
     return builtins + commands
 
 
+SHUTDOWN_FILE = os.path.join(PROJECT_DIR, ".shutdown")
+
+
 class App:
     """Main application class managing the palette lifecycle."""
 
-    def __init__(self) -> None:
+    def __init__(self, aircraft_override: Optional[str] = None) -> None:
         self.qapp = QApplication(sys.argv)
         self.qapp.setQuitOnLastWindowClosed(False)
 
         # Setup
         self.dcs_dir = _ensure_dcs_install_dir(self.qapp)
         if not self.dcs_dir:
-            print("ERROR: No DCS installation directory. Exiting.")
+            logger.error("No DCS installation directory. Exiting.")
             sys.exit(1)
 
-        self.aircraft = _ensure_aircraft(self.dcs_dir)
+        # Use CLI-provided aircraft if given, otherwise interactive selection
+        if aircraft_override:
+            self.aircraft: Optional[str] = aircraft_override
+            save_selected_aircraft(aircraft_override)
+            logger.info("Aircraft set from command line: %s", aircraft_override)
+        else:
+            self.aircraft = _ensure_aircraft(self.dcs_dir)
         if not self.aircraft:
-            print("ERROR: No aircraft selected. Exiting.")
+            logger.error("No aircraft selected. Exiting.")
             sys.exit(1)
 
         self.usage = UsageTracker()
@@ -152,22 +169,37 @@ class App:
         self.palette: Optional[CommandPalette] = None
         self._load_commands()
 
+        # Clean up any leftover shutdown file
+        self._cleanup_shutdown_file()
+
     def _load_commands(self) -> None:
         """Load (or reload) commands for the current aircraft."""
-        print(f"Loading commands for {self.aircraft}...")
+        logger.info("Loading commands for %s...", self.aircraft)
 
         input_name = get_aircraft_input_name(self.dcs_dir, self.aircraft) if self.dcs_dir else None
+        bios_json = find_bios_json(DCS_SAVED_GAMES, self.aircraft or "")
+        saved_name = get_aircraft_saved_name(DCS_SAVED_GAMES, self.aircraft or "")
+
+        if bios_json:
+            logger.info("DCS-BIOS JSON: %s", bios_json)
+        else:
+            logger.warning("No DCS-BIOS JSON found for %s", self.aircraft)
+        if saved_name:
+            logger.info("User keybinds: Config/Input/%s/", saved_name)
 
         commands = load_all_commands(
             dcs_install_dir=self.dcs_dir or "",
             aircraft_module=self.aircraft or "",
             aircraft_input_name=input_name or self.aircraft or "",
+            dcs_saved_games=DCS_SAVED_GAMES,
+            aircraft_saved_name=saved_name,
+            controls_json_path=bios_json,
         )
         commands = _add_palette_commands(commands)
 
         bios_count = sum(1 for c in commands if c.source == CommandSource.DCS_BIOS)
         kb_count = sum(1 for c in commands if c.source == CommandSource.KEYBOARD)
-        print(f"  {len(commands)} commands ({bios_count} BIOS, {kb_count} keyboard/palette)")
+        logger.info("%d commands loaded (%d BIOS, %d keyboard/palette)", len(commands), bios_count, kb_count)
 
         if self.palette:
             self.palette._commands = commands
@@ -199,7 +231,7 @@ class App:
             self.aircraft = choice
             save_selected_aircraft(choice)
             self._load_commands()
-            print(f"Switched to {choice}")
+            logger.info("Switched to %s", choice)
 
     def _open_config(self) -> None:
         """Show a simple config dialog."""
@@ -212,6 +244,20 @@ class App:
             f"Delete settings.json to re-run setup."
         )
         QMessageBox.information(None, "DCS Command Palette - Settings", msg)
+
+    def _cleanup_shutdown_file(self) -> None:
+        """Remove any leftover shutdown file from a previous run."""
+        try:
+            os.remove(SHUTDOWN_FILE)
+        except FileNotFoundError:
+            pass
+
+    def _check_shutdown(self) -> None:
+        """Check if the Lua hook has requested a shutdown."""
+        if os.path.exists(SHUTDOWN_FILE):
+            logger.info("Shutdown signal received from DCS hook.")
+            self._cleanup_shutdown_file()
+            self.qapp.quit()
 
     def run(self) -> None:
         assert self.palette is not None
@@ -232,9 +278,9 @@ class App:
             None, HOTKEY_ID, MOD_CTRL | MOD_NOREPEAT, VK_SPACE
         )
         if not registered:
-            print("WARNING: Failed to register Ctrl+Space hotkey.")
+            logger.warning("Failed to register Ctrl+Space hotkey.")
         else:
-            print("Hotkey: Ctrl+Space")
+            logger.info("Hotkey: Ctrl+Space")
 
         hotkey_filter = HotkeyFilter(lambda: bridge.triggered.emit())
         self.qapp.installNativeEventFilter(hotkey_filter)
@@ -252,18 +298,40 @@ class App:
         tray.setContextMenu(tray_menu)
         tray.show()
 
-        print("DCS Command Palette running. Press Ctrl+Space to open.")
+        # Periodically check for shutdown signal from Lua hook (every 2 seconds)
+        from PyQt6.QtCore import QTimer  # type: ignore[import-untyped]
+        shutdown_timer = QTimer()
+        shutdown_timer.timeout.connect(self._check_shutdown)
+        shutdown_timer.start(2000)
+
+        logger.info("DCS Command Palette running. Press Ctrl+Space to open.")
 
         ret = self.qapp.exec()
 
         ctypes.windll.user32.UnregisterHotKey(None, HOTKEY_ID)
+        self._cleanup_shutdown_file()
         self.usage.save()
         self.sender.close()
         sys.exit(ret)
 
 
 def main() -> None:
-    app = App()
+    parser = argparse.ArgumentParser(description="DCS Command Palette")
+    parser.add_argument(
+        "--aircraft",
+        help="Aircraft module name (e.g. FA-18C_hornet). "
+             "Normally set automatically by the DCS Lua hook.",
+    )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="Enable debug logging.",
+    )
+    args = parser.parse_args()
+
+    setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
+    logger.info("DCS Command Palette starting")
+
+    app = App(aircraft_override=args.aircraft)
     app.run()
 
 

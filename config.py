@@ -12,9 +12,6 @@ DCS_BIOS_PORT: int = 7778
 # Paths
 PROJECT_DIR: str = os.path.dirname(os.path.abspath(__file__))
 DCS_SAVED_GAMES: str = os.path.dirname(PROJECT_DIR)
-CONTROLS_JSON_PATH: str = os.path.join(
-    DCS_SAVED_GAMES, "Scripts", "DCS-BIOS", "doc", "json", "FA-18C_hornet.json"
-)
 USAGE_DATA_PATH: str = os.path.join(PROJECT_DIR, "usage_data.json")
 
 # DCS installation directory (default, overridden by settings.json at runtime)

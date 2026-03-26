@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Maps DCS key names to pynput-compatible names
 _KEY_MAP: Dict[str, str] = {
@@ -76,15 +76,242 @@ def parse_lua_commands(lua_content: str) -> List[KeyboardEntry]:
     return results
 
 
+@dataclass
+class _DiffEntry:
+    """A single entry from a Keyboard.diff.lua file."""
+    name: str
+    added_combo: str  # new key combo, or "" if only removing
+    is_removal: bool  # True if this entry removes a binding (with no replacement)
+
+
+# Simple Lua value type for the table parser
+LuaValue = Any  # str, int, float, bool, None, or Dict/List
+
+
+def _parse_lua_table(content: str) -> Dict[str, LuaValue]:
+    """Parse a Lua table literal into a Python dict.
+
+    Handles the subset of Lua used in DCS diff files:
+    - String keys: ["key"] = value
+    - Integer keys: [1] = value
+    - String values: "text"
+    - Nested tables: { ... }
+    - Ignores: 'local diff =', 'return diff', comments
+    """
+    pos = 0
+    length = len(content)
+
+    def skip_ws() -> None:
+        nonlocal pos
+        while pos < length:
+            if content[pos] in ' \t\r\n':
+                pos += 1
+            elif content[pos:pos + 2] == '--':
+                # Skip Lua comment to end of line
+                while pos < length and content[pos] != '\n':
+                    pos += 1
+            else:
+                break
+
+    def parse_string() -> str:
+        nonlocal pos
+        quote = content[pos]
+        pos += 1  # skip opening quote
+        start = pos
+        while pos < length and content[pos] != quote:
+            if content[pos] == '\\':
+                pos += 1  # skip escaped char
+            pos += 1
+        result = content[start:pos]
+        pos += 1  # skip closing quote
+        return result
+
+    def parse_number() -> LuaValue:
+        nonlocal pos
+        start = pos
+        if content[pos] == '-':
+            pos += 1
+        while pos < length and (content[pos].isdigit() or content[pos] == '.'):
+            pos += 1
+        num_str = content[start:pos]
+        if '.' in num_str:
+            return float(num_str)
+        return int(num_str)
+
+    def parse_value() -> LuaValue:
+        nonlocal pos
+        skip_ws()
+        if pos >= length:
+            return None
+
+        ch = content[pos]
+
+        if ch == '{':
+            return parse_table()
+        elif ch == '"':
+            return parse_string()
+        elif ch == '-' or ch.isdigit():
+            return parse_number()
+        elif content[pos:pos + 4] == 'true':
+            pos += 4
+            return True
+        elif content[pos:pos + 5] == 'false':
+            pos += 5
+            return False
+        elif content[pos:pos + 3] == 'nil':
+            pos += 3
+            return None
+        return None
+
+    def parse_table() -> Dict[str, LuaValue]:
+        nonlocal pos
+        pos += 1  # skip '{'
+        result: Dict[str, LuaValue] = {}
+        auto_index = 1
+
+        while pos < length:
+            skip_ws()
+            if pos >= length:
+                break
+            if content[pos] == '}':
+                pos += 1
+                break
+
+            # Check for key = value
+            if content[pos] == '[':
+                pos += 1  # skip '['
+                skip_ws()
+                if content[pos] == '"':
+                    key: str = parse_string()
+                else:
+                    # Integer key like [1]
+                    num_start = pos
+                    while pos < length and content[pos].isdigit():
+                        pos += 1
+                    key = content[num_start:pos]
+                skip_ws()
+                pos += 1  # skip ']'
+                skip_ws()
+                pos += 1  # skip '='
+                val = parse_value()
+                result[key] = val
+            elif content[pos] == '{':
+                # Anonymous table entry (array-style)
+                val = parse_table()
+                result[str(auto_index)] = val
+                auto_index += 1
+            else:
+                # Skip unexpected characters
+                pos += 1
+                continue
+
+            skip_ws()
+            if pos < length and content[pos] == ',':
+                pos += 1
+
+        return result
+
+    # Find the first '{' that starts the main table
+    first_brace = content.find('{')
+    if first_brace == -1:
+        return {}
+    pos = first_brace
+    result = parse_table()
+    return result
+
+
+def parse_diff_lua(content: str) -> List[_DiffEntry]:
+    """Parse a Keyboard.diff.lua file into diff entries.
+
+    The file contains a Lua table with keyDiffs, where each entry has:
+    - ["name"] = "Command Name"
+    - optionally ["added"] = { {["key"] = "X", ["reformers"] = {...}} }
+    - optionally ["removed"] = { {["key"] = "Y"} }
+    """
+    results: List[_DiffEntry] = []
+
+    data = _parse_lua_table(content)
+    key_diffs = data.get("keyDiffs", {})
+    if not isinstance(key_diffs, dict):
+        return results
+
+    for _hash_key, entry in key_diffs.items():
+        if not isinstance(entry, dict):
+            continue
+
+        name = entry.get("name", "")
+        if not isinstance(name, str) or not name:
+            continue
+
+        # Extract added combo
+        added_combo = ""
+        added = entry.get("added", {})
+        if isinstance(added, dict):
+            # Get first added binding (key "1")
+            first_added = added.get("1", {})
+            if isinstance(first_added, dict):
+                key = first_added.get("key", "")
+                reformers_table = first_added.get("reformers", {})
+                reformers_list: List[str] = []
+                if isinstance(reformers_table, dict):
+                    for i in sorted(reformers_table.keys(), key=lambda k: int(k) if k.isdigit() else 0):
+                        val = reformers_table[i]
+                        if isinstance(val, str):
+                            reformers_list.append(val)
+                if isinstance(key, str) and key:
+                    added_combo = _build_combo_string(key, reformers_list)
+
+        # Check for removed section
+        has_removed = "removed" in entry and isinstance(entry["removed"], dict)
+
+        is_removal = has_removed and not added_combo
+
+        results.append(_DiffEntry(name=name, added_combo=added_combo, is_removal=is_removal))
+
+    return results
+
+
+def _apply_diff(
+    entries: List[KeyboardEntry],
+    diff_entries: List[_DiffEntry],
+) -> List[KeyboardEntry]:
+    """Apply diff overrides to a list of keyboard entries.
+
+    Matches by name (case-insensitive). For each diff entry:
+    - If it has an added_combo: update the matching entry's key_combo
+    - If it's a pure removal: clear the matching entry's key_combo
+    """
+    by_name: Dict[str, KeyboardEntry] = {e.name.lower(): e for e in entries}
+
+    for diff in diff_entries:
+        key = diff.name.lower()
+        if key in by_name:
+            if diff.is_removal:
+                by_name[key].key_combo = ""
+            elif diff.added_combo:
+                by_name[key].key_combo = diff.added_combo
+
+    return entries
+
+
 def load_keyboard_entries(
     dcs_install_dir: str,
     aircraft_module: str = "FA-18C",
     aircraft_input_name: str = "FA-18C",
+    dcs_saved_games: Optional[str] = None,
+    aircraft_saved_name: Optional[str] = None,
 ) -> List[KeyboardEntry]:
-    """Load all keyboard shortcut entries for an aircraft from the DCS install directory."""
+    """Load all keyboard shortcut entries for an aircraft.
+
+    Merges three layers:
+    1. Common keyboard bindings (from DCS install)
+    2. Aircraft-specific defaults (from DCS install)
+    3. User customizations from Keyboard.diff.lua (from saved games)
+    """
     entries: List[KeyboardEntry] = []
     seen_names: Set[str] = set()
 
+    # Layers 1 & 2: default bindings from DCS install dir
     files_to_parse: List[str] = [
         os.path.join(dcs_install_dir, "Config", "Input", "Aircrafts", "common_keyboard_binding.lua"),
         os.path.join(dcs_install_dir, "Config", "Input", "Supercarrier", "Input", "keyboard.lua"),
@@ -104,6 +331,18 @@ def load_keyboard_entries(
                 continue
             seen_names.add(entry.name.lower())
             entries.append(entry)
+
+    # Layer 3: user customizations from saved games
+    if dcs_saved_games and aircraft_saved_name:
+        diff_path = os.path.join(
+            dcs_saved_games, "Config", "Input", aircraft_saved_name,
+            "keyboard", "Keyboard.diff.lua",
+        )
+        if os.path.exists(diff_path):
+            with open(diff_path, encoding="utf-8", errors="replace") as f:
+                diff_content = f.read()
+            diff_entries = parse_diff_lua(diff_content)
+            entries = _apply_diff(entries, diff_entries)
 
     return entries
 

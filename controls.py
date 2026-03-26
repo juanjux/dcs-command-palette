@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from config import CONTROLS_JSON_PATH
 
 
 @dataclass
@@ -39,7 +38,7 @@ def _parse_position_labels(inputs: List[Dict[str, Any]]) -> Optional[Dict[int, s
     return None
 
 
-def load_controls(json_path: str = CONTROLS_JSON_PATH) -> list[Control]:
+def load_controls(json_path: str) -> list[Control]:
     with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
 

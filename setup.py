@@ -197,3 +197,70 @@ def get_aircraft_input_name(dcs_install_dir: str, aircraft_module: str) -> Optio
         if os.path.isdir(os.path.join(input_dir, name)):
             return name
     return None
+
+
+def find_bios_json(dcs_saved_games: str, aircraft_module: str) -> Optional[str]:
+    """Find the DCS-BIOS JSON file for an aircraft module.
+
+    Looks in Scripts/DCS-BIOS/doc/json/ for a file matching the module name.
+    Tries exact match first, then case-insensitive search.
+    """
+    json_dir = os.path.join(dcs_saved_games, "Scripts", "DCS-BIOS", "doc", "json")
+    if not os.path.isdir(json_dir):
+        return None
+
+    # Try common naming patterns
+    candidates = [
+        f"{aircraft_module}.json",  # exact match (e.g. "FA-18C.json")
+    ]
+
+    # List all JSON files for fuzzy matching
+    try:
+        available = os.listdir(json_dir)
+    except OSError:
+        return None
+
+    for candidate in candidates:
+        full = os.path.join(json_dir, candidate)
+        if os.path.isfile(full):
+            return full
+
+    # Case-insensitive search and partial matching
+    module_lower = aircraft_module.lower().replace("-", "").replace("_", "")
+    for filename in available:
+        if not filename.endswith(".json"):
+            continue
+        stem = filename[:-5].lower().replace("-", "").replace("_", "")
+        if stem == module_lower or module_lower in stem or stem in module_lower:
+            return os.path.join(json_dir, filename)
+
+    return None
+
+
+def get_aircraft_saved_name(
+    dcs_saved_games: str, aircraft_module: str,
+) -> Optional[str]:
+    """Find the Config/Input folder name for user keybind customizations.
+
+    The saved games folder name can differ from the module name
+    (e.g., module "FA-18C" -> saved games "FA-18C_hornet").
+    """
+    input_dir = os.path.join(dcs_saved_games, "Config", "Input")
+    if not os.path.isdir(input_dir):
+        return None
+
+    # Exact match first
+    if os.path.isdir(os.path.join(input_dir, aircraft_module)):
+        return aircraft_module
+
+    # Search for folder that starts with the module name
+    try:
+        for name in os.listdir(input_dir):
+            if not os.path.isdir(os.path.join(input_dir, name)):
+                continue
+            if name.startswith(aircraft_module):
+                return name
+    except OSError:
+        pass
+
+    return None
