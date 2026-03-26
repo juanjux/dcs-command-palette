@@ -13,7 +13,7 @@ DCS_BIOS_PORT: int = 7778
 PALETTE_LISTEN_PORT: int = 7780
 
 # Paths
-PROJECT_DIR: str = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _detect_dcs_saved_games() -> str:

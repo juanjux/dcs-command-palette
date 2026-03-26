@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from config import AIRCRAFT_INPUT_NAME, AIRCRAFT_MODULE, DCS_INSTALL_DIR, DCS_SAVED_GAMES
-from controls import Control, load_controls
-from keyboard_commands import KeyboardEntry, load_keyboard_entries
+from src.config.settings import AIRCRAFT_INPUT_NAME, AIRCRAFT_MODULE, DCS_INSTALL_DIR, DCS_SAVED_GAMES
+from src.bios.controls import Control, load_controls
+from src.lib.keyboard import KeyboardEntry, load_keyboard_entries
 
 
 class CommandSource(Enum):

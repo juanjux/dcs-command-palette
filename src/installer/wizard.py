@@ -104,7 +104,7 @@ def is_hook_installed(dcs_saved_games: str) -> bool:
 def _install_dcs_bios(dcs_dir: str) -> bool:
     """Download and install DCS-BIOS. Returns True on success."""
     try:
-        from bios_installer import (
+        from src.bios.installer import (
             backup_scripts,
             download_zip,
             ensure_export_lua,

@@ -2,7 +2,7 @@ import json
 import os
 import time
 
-from usage_tracker import UsageTracker
+from src.palette.usage import UsageTracker
 
 
 def test_record_and_retrieve(tmp_path: object) -> None:

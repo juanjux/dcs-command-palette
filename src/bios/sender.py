@@ -1,7 +1,7 @@
 import socket
 from typing import Tuple
 
-from config import DCS_BIOS_HOST, DCS_BIOS_PORT
+from src.config.settings import DCS_BIOS_HOST, DCS_BIOS_PORT
 
 
 class DCSBiosSender:

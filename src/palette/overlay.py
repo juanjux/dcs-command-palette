@@ -21,9 +21,9 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
 
 import ctypes
 
-from commands import Command, CommandSource
-import config as cfg
-from config import (
+from src.palette.commands import Command, CommandSource
+from src.config import settings as cfg
+from src.config.settings import (
     ACCENT_COLOR,
     BG_COLOR,
     CATEGORY_COLOR,
@@ -38,11 +38,11 @@ from config import (
     TEXT_COLOR,
     TEXT_MUTED_COLOR,
 )
-from bios_state import BiosStateReader
-from dcs_bios import DCSBiosSender
-from key_sender import send_key_combo
-from search import search
-from usage_tracker import UsageTracker
+from src.bios.state import BiosStateReader
+from src.bios.sender import DCSBiosSender
+from src.lib.key_sender import send_key_combo
+from src.lib.search import search
+from src.palette.usage import UsageTracker
 
 
 class ResultItem(QWidget):  # type: ignore[misc]

@@ -6,7 +6,7 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 
-from config import PROJECT_DIR
+from src.config.settings import PROJECT_DIR
 
 LOG_FILE = os.path.join(PROJECT_DIR, "dcs_command_palette.log")
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

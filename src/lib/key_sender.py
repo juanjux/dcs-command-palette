@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Union
 
 from pynput.keyboard import Controller, Key  # type: ignore[import-untyped]
 
-from keyboard_commands import parse_combo
+from src.lib.keyboard import parse_combo
 
 _keyboard = Controller()
 

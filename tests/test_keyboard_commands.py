@@ -1,5 +1,5 @@
 """Tests for keyboard command parsing including user diff overrides."""
-from keyboard_commands import (
+from src.lib.keyboard import (
     KeyboardEntry,
     _DiffEntry,
     _apply_diff,

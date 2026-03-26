@@ -1,6 +1,6 @@
 import os
 
-from controls import Control, load_controls
+from src.bios.controls import Control, load_controls
 
 # Resolve the FA-18C_hornet.json path relative to the project
 _DCS_SAVED_GAMES = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

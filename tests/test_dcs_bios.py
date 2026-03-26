@@ -1,7 +1,7 @@
 import socket
 from unittest.mock import MagicMock, patch
 
-from dcs_bios import DCSBiosSender
+from src.bios.sender import DCSBiosSender
 
 
 def test_send_format() -> None:

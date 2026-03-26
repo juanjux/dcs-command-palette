@@ -63,7 +63,7 @@ def _generate_iss(version: str) -> str:
 
 #define MyAppName "DCS Command Palette"
 #define MyAppVersion "{version}"
-#define MyAppPublisher "Juanjo Alvarez"
+#define MyAppPublisher "Juan Jose Alvarez Martinez"
 #define MyAppURL "https://github.com/juanjux/dcs-command-palette"
 #define MyAppExeName "dcs-command-palette.exe"
 
@@ -74,7 +74,7 @@ AppVersion={{#MyAppVersion}}
 AppPublisher={{#MyAppPublisher}}
 AppPublisherURL={{#MyAppURL}}
 AppSupportURL={{#MyAppURL}}/issues
-DefaultDirName={{autopf}}\\DCS Command Palette
+DefaultDirName={{code:GetDefaultDir}}
 DefaultGroupName={{#MyAppName}}
 LicenseFile={os.path.join(PROJECT_DIR, "LICENSE")}
 OutputDir={os.path.join(PROJECT_DIR, "dist")}
@@ -104,14 +104,36 @@ Source: "{os.path.join(PROJECT_DIR, 'dcs_command_palette_hook.lua')}"; DestDir: 
 [Icons]
 Name: "{{group}}\\{{#MyAppName}}"; Filename: "{{app}}\\{{#MyAppExeName}}"
 Name: "{{group}}\\Uninstall {{#MyAppName}}"; Filename: "{{uninstallexe}}"
-Name: "{{commondesktop}}\\{{#MyAppName}}"; Filename: "{{app}}\\{{#MyAppExeName}}"; Tasks: desktopicon
+Name: "{{userdesktop}}\\{{#MyAppName}}"; Filename: "{{app}}\\{{#MyAppExeName}}"; Tasks: desktopicon
 
 [Run]
 ; Offer to launch after install
 Filename: "{{app}}\\{{#MyAppExeName}}"; Description: "Launch DCS Command Palette"; Flags: nowait postinstall skipifsilent
 
 [Code]
-// Pascal Script to install the Lua hook if the task is selected
+// Pascal Script for custom install logic
+
+function GetDefaultDir(Param: String): String;
+var
+  Path: String;
+begin
+  // Default to Saved Games\DCS\dcs-command-palette
+  Path := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS');
+  if DirExists(Path) then
+  begin
+    Result := Path + '\\dcs-command-palette';
+    Exit;
+  end;
+  // Try OpenBeta
+  Path := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS.openbeta');
+  if DirExists(Path) then
+  begin
+    Result := Path + '\\dcs-command-palette';
+    Exit;
+  end;
+  // Fallback
+  Result := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS\\dcs-command-palette');
+end;
 
 function GetDCSSavedGamesPath(): String;
 var
@@ -203,8 +225,8 @@ def build_pyinstaller() -> bool:
         "--noconsole",
         "--noconfirm",
         "--add-data", f"dcs_command_palette_hook.lua{os.pathsep}.",
-        "--hidden-import", "install",
-        "--hidden-import", "bios_installer",
+        "--hidden-import", "src.installer.wizard",
+        "--hidden-import", "src.bios.installer",
         "--hidden-import", "pynput.keyboard._win32",
         "--hidden-import", "pynput.mouse._win32",
         "--collect-all", "pygame",

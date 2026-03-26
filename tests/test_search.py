@@ -1,10 +1,10 @@
 import os
 import time
 
-from commands import Command, CommandSource, load_all_commands, _control_to_command
-from controls import load_controls
-from search import search
-from usage_tracker import UsageTracker
+from src.palette.commands import Command, CommandSource, load_all_commands, _control_to_command
+from src.bios.controls import load_controls
+from src.lib.search import search
+from src.palette.usage import UsageTracker
 
 # Resolve the FA-18C_hornet.json path relative to the project
 _DCS_SAVED_GAMES = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -74,7 +74,7 @@ def test_search_empty_returns_most_used(tmp_path: object) -> None:
 
 
 def test_search_respects_max_results(tmp_path: object) -> None:
-    from config import MAX_RESULTS
+    from src.config.settings import MAX_RESULTS
     controls = load_controls(_FA18C_JSON)
     usage = _make_tracker(tmp_path)
     results = search("switch", controls, usage)

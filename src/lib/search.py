@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Tuple
 
 from rapidfuzz import fuzz, process
 
-from commands import Command, CommandSource
-from config import (
+from src.palette.commands import Command, CommandSource
+from src.config.settings import (
     MAX_RESULTS,
     PREFIX_MATCH_BONUS,
     RECENCY_DECAY_HOURS,
@@ -16,7 +16,7 @@ from config import (
     WEIGHT_FUZZY,
     WEIGHT_RECENCY,
 )
-from usage_tracker import UsageTracker
+from src.palette.usage import UsageTracker
 
 
 def _recency_score(last_used: float) -> float:

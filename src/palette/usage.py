@@ -3,7 +3,7 @@ import os
 import time
 from typing import Any, Dict
 
-from config import USAGE_DATA_PATH
+from src.config.settings import USAGE_DATA_PATH
 
 
 class UsageTracker:

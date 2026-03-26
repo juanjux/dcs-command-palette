@@ -7,7 +7,7 @@ import re
 import winreg
 from typing import Dict, List, Optional, Set
 
-from config import DCS_SAVED_GAMES, PROJECT_DIR
+from src.config.settings import DCS_SAVED_GAMES, PROJECT_DIR
 
 SETTINGS_PATH = os.path.join(PROJECT_DIR, "settings.json")
 

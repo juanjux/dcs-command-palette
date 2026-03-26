@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QVBoxLayout,
 )
 
-from bios_installer import (
+from src.bios.installer import (
     backup_scripts,
     download_zip,
     ensure_export_lua,
@@ -31,8 +31,8 @@ from bios_installer import (
     install_bios,
     is_bios_installed,
 )
-from config import DCS_SAVED_GAMES, PROJECT_DIR
-from setup import (
+from src.config.settings import DCS_SAVED_GAMES, PROJECT_DIR
+from src.detection import (
     _read_settings,
     _save_settings,
     detect_dcs_install_dir,
@@ -609,7 +609,7 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
     def _poll_joystick(self) -> None:
         """Check for joystick button presses."""
         try:
-            from joystick_reader import poll_joystick_buttons
+            from src.lib.joystick import poll_joystick_buttons
         except Exception:
             # If joystick_reader fails to import (e.g. not on Windows), just skip
             self._joy_timer.stop()

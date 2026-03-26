@@ -1,7 +1,7 @@
 """Tests for setup.py helpers."""
 import os
 
-from setup import (
+from src.detection import (
     find_bios_json,
     get_aircraft_saved_name,
     resolve_unit_type_to_module,

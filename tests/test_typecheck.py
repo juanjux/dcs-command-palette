@@ -7,8 +7,11 @@ def test_mypy_typecheck() -> None:
     """Run mypy on all source files to verify type correctness."""
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     source_files = [
-        os.path.join(project_dir, f)
-        for f in ["config.py", "controls.py", "dcs_bios.py", "usage_tracker.py", "search.py"]
+        os.path.join(project_dir, "src", "config", "settings.py"),
+        os.path.join(project_dir, "src", "bios", "controls.py"),
+        os.path.join(project_dir, "src", "bios", "sender.py"),
+        os.path.join(project_dir, "src", "palette", "usage.py"),
+        os.path.join(project_dir, "src", "lib", "search.py"),
     ]
     result = subprocess.run(
         [sys.executable, "-m", "mypy", "--config-file", os.path.join(project_dir, "pyproject.toml")]
