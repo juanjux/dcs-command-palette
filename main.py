@@ -7,13 +7,16 @@ import os
 import sys
 from typing import List, Optional
 
+import socket
+import threading
+
 from PyQt6.QtCore import QObject, pyqtSignal, QAbstractNativeEventFilter, QByteArray  # type: ignore[import-untyped]
 from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QApplication, QSystemTrayIcon, QMenu, QInputDialog, QFileDialog, QMessageBox,
 )
 
 from commands import Command, CommandSource, load_all_commands
-from config import DCS_BIOS_HOST, DCS_BIOS_PORT, DCS_SAVED_GAMES, PROJECT_DIR
+from config import DCS_BIOS_HOST, DCS_BIOS_PORT, DCS_SAVED_GAMES, PALETTE_LISTEN_PORT, PROJECT_DIR
 from config_window import ConfigWindow
 from dcs_bios import DCSBiosSender
 from overlay import CommandPalette
@@ -58,6 +61,51 @@ class HotkeyFilter(QAbstractNativeEventFilter):  # type: ignore[misc]
 
 class HotkeyBridge(QObject):  # type: ignore[misc]
     triggered = pyqtSignal()
+
+
+class UDPToggleListener:
+    """Listens for TOGGLE_PALETTE UDP packets from the DCS Lua hook."""
+
+    def __init__(self, port: int, callback: object) -> None:
+        self._port = port
+        self._callback = callback
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.settimeout(1.0)
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> bool:
+        try:
+            self._sock.bind(("127.0.0.1", self._port))
+        except OSError as e:
+            logger.error("Failed to bind UDP listener on port %d: %s", self._port, e)
+            return False
+        self._running = True
+        self._thread = threading.Thread(target=self._listen, daemon=True)
+        self._thread.start()
+        logger.info("UDP toggle listener on port %d", self._port)
+        return True
+
+    def _listen(self) -> None:
+        while self._running:
+            try:
+                data, _addr = self._sock.recvfrom(256)
+                msg = data.decode("ascii", errors="ignore").strip()
+                if msg == "TOGGLE_PALETTE":
+                    logger.debug("Received TOGGLE_PALETTE via UDP")
+                    if callable(self._callback):
+                        self._callback()  # type: ignore[operator]
+            except socket.timeout:
+                continue
+            except OSError:
+                if self._running:
+                    logger.exception("UDP listener error")
+                break
+
+    def stop(self) -> None:
+        self._running = False
+        self._sock.close()
 
 
 def _ensure_dcs_install_dir(app: QApplication) -> Optional[str]:
@@ -283,6 +331,13 @@ class App:
 
         bridge.triggered.connect(toggle_palette)
 
+        # UDP toggle listener (for triggering from inside DCS via Lua hook)
+        udp_listener = UDPToggleListener(
+            PALETTE_LISTEN_PORT,
+            lambda: bridge.triggered.emit(),
+        )
+        udp_listener.start()
+
         # Register Ctrl+Space
         registered = ctypes.windll.user32.RegisterHotKey(
             None, HOTKEY_ID, MOD_CTRL | MOD_NOREPEAT, VK_SPACE
@@ -322,6 +377,7 @@ class App:
         ret = self.qapp.exec()
 
         ctypes.windll.user32.UnregisterHotKey(None, HOTKEY_ID)
+        udp_listener.stop()
         self._cleanup_shutdown_file()
         self.usage.save()
         self.sender.close()

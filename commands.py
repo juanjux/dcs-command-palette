@@ -48,11 +48,25 @@ class Command:
         return False
 
 
+def _bios_category(ctrl: Control) -> str:
+    """Build a user-friendly category for a DCS-BIOS control.
+
+    DCS-BIOS categories are physical panel names (e.g., "Select Jettison Button")
+    which can be misleading when the panel contains unrelated controls (e.g., FLAP_SW).
+    We derive the category from the identifier prefix instead, which is always relevant.
+    """
+    # Use the first part of the identifier as the category
+    # e.g., "FLAP_SW" -> "FLAP", "AMPCD_BRT_CTL" -> "AMPCD", "COMM1" -> "COMM"
+    parts = ctrl.identifier.split("_")
+    prefix = parts[0] if parts else ctrl.identifier
+    return f"BIOS: {prefix}"
+
+
 def _control_to_command(ctrl: Control) -> Command:
     return Command(
         identifier=ctrl.identifier,
         description=ctrl.description,
-        category=f"BIOS: {ctrl.category}",
+        category=_bios_category(ctrl),
         source=CommandSource.DCS_BIOS,
         search_text=ctrl.search_text,
         control_type=ctrl.control_type,

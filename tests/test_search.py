@@ -1,6 +1,7 @@
 import os
 import time
 
+from commands import Command, CommandSource, load_all_commands, _control_to_command
 from controls import load_controls
 from search import search
 from usage_tracker import UsageTracker
@@ -87,3 +88,22 @@ def test_search_prefix_bonus(tmp_path: object) -> None:
     identifiers = [r.identifier for r in results]
     # All AMPCD_ controls should rank highly
     assert identifiers[0].startswith("AMPCD")
+
+
+def test_bios_category_not_misleading() -> None:
+    """Category shown in the palette should not be completely unrelated to the control.
+
+    Regression: FLAP_SW was showing category "BIOS: Select Jettison Button" because
+    DCS-BIOS groups controls by physical panel, and the panel is named after a different
+    control. The displayed category should be meaningful to the user.
+    """
+    controls = load_controls(_FA18C_JSON)
+    flap = [c for c in controls if c.identifier == "FLAP_SW"][0]
+    cmd = _control_to_command(flap)
+
+    # The category should NOT contain completely unrelated control names
+    cat_lower = cmd.category.lower()
+    assert "jettison" not in cat_lower, (
+        f"FLAP_SW category '{cmd.category}' is misleading — "
+        f"it references an unrelated control"
+    )

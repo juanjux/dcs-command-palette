@@ -9,6 +9,9 @@ HOTKEY_KEY: str = "space"
 DCS_BIOS_HOST: str = "127.0.0.1"
 DCS_BIOS_PORT: int = 7778
 
+# Palette toggle listener (receives TOGGLE_PALETTE from DCS Lua hook)
+PALETTE_LISTEN_PORT: int = 7780
+
 # Paths
 PROJECT_DIR: str = os.path.dirname(os.path.abspath(__file__))
 DCS_SAVED_GAMES: str = os.path.dirname(PROJECT_DIR)
