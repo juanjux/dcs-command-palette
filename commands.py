@@ -81,6 +81,66 @@ def _entry_to_command(entry: KeyboardEntry) -> Command:
     )
 
 
+def _enrich_position_labels(
+    commands: List[Command], kb_entries: List[KeyboardEntry],
+) -> None:
+    """Fill in position_labels for BIOS selectors using keyboard entry names.
+
+    Keyboard entries follow the pattern "{Description} - {PositionName}"
+    (e.g., "FLIR Switch - OFF", "FLIR Switch - STBY", "FLIR Switch - ON").
+    For BIOS selectors without position_labels, we collect these names and
+    assign them as position labels in order of appearance (matching max_value).
+
+    Excludes directional entries like "CCW", "CW", "Up", "Down", "Pull", "Stow".
+    """
+    # Build a map of description -> list of position names from keyboard entries
+    directional = {"ccw", "cw", "up", "down", "pull", "stow", "pull/stow"}
+    desc_positions: Dict[str, List[str]] = {}
+    for entry in kb_entries:
+        if " - " not in entry.name:
+            continue
+        base, pos_name = entry.name.rsplit(" - ", 1)
+        if pos_name.lower() in directional:
+            continue
+        desc_positions.setdefault(base, []).append(pos_name)
+
+    # Apply to BIOS commands that lack labels
+    for cmd in commands:
+        if cmd.source != CommandSource.DCS_BIOS:
+            continue
+        if cmd.position_labels:
+            continue  # already has labels from DCS-BIOS JSON
+        if cmd.max_value is None or cmd.max_value < 2:
+            continue
+
+        # Try exact description match first, then try matching on identifier-derived name
+        # BIOS description: "RADAR Switch Change ,OFF/STBY/OPR/EMERG(PULL)"
+        # Keyboard base: "RADAR Switch"
+        # Also try: identifier "RADAR_SW" -> "RADAR Switch"
+        id_as_desc = cmd.identifier.replace("_SW", " Switch").replace("_", " ").title()
+        candidates = [cmd.description, id_as_desc]
+        positions = None
+        for candidate in candidates:
+            positions = desc_positions.get(candidate)
+            if positions:
+                break
+            # Try prefix matching: find a key that starts with candidate or vice versa
+            if not positions:
+                for base_name, pos_list in desc_positions.items():
+                    if base_name.startswith(candidate) or candidate.startswith(base_name):
+                        positions = pos_list
+                        break
+            if positions:
+                break
+
+        if not positions:
+            continue
+
+        # The number of positions should match max_value + 1
+        if len(positions) == cmd.max_value + 1:
+            cmd.position_labels = {i: label for i, label in enumerate(positions)}
+
+
 def load_all_commands(
     dcs_install_dir: str = DCS_INSTALL_DIR,
     aircraft_module: str = AIRCRAFT_MODULE,
@@ -117,5 +177,11 @@ def load_all_commands(
     )
     for entry in kb_entries:
         commands.append(_entry_to_command(entry))
+
+    # Enrich BIOS selectors that lack position labels using keyboard entry names.
+    # Pattern: BIOS "FLIR Switch" (max_value=2, no labels) + keyboard entries
+    # "FLIR Switch - OFF", "FLIR Switch - STBY", "FLIR Switch - ON"
+    # -> extract {0: "OFF", 1: "STBY", 2: "ON"}
+    _enrich_position_labels(commands, kb_entries)
 
     return commands

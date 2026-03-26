@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtSignal, QTimer  # type: ignore[import-untyped]
+logger = logging.getLogger(__name__)
+
+from PyQt6.QtCore import Qt, QEvent, QPropertyAnimation, QEasingCurve, pyqtSignal, QTimer  # type: ignore[import-untyped]
 from PyQt6.QtGui import QKeyEvent  # type: ignore[import-untyped]
 from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QApplication,
@@ -387,6 +390,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
         )
         self._search.textChanged.connect(self._on_search_changed)
+        self._search.installEventFilter(self)
         self._container_layout.addWidget(self._search)
 
         self._results_widget = QWidget()
@@ -420,20 +424,44 @@ class CommandPalette(QWidget):  # type: ignore[misc]
     def _force_focus(self) -> None:
         """Force the palette window to the foreground and focus the search box.
 
-        Uses Win32 SetForegroundWindow to steal focus from DCS.
+        Uses AttachThreadInput trick to bypass Windows focus-stealing prevention.
+        SetForegroundWindow alone fails when another app (DCS) has focus.
         """
+        hwnd = int(self.winId())
+        if not hwnd:
+            return
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        # Get the foreground window's thread and our thread
+        fg_hwnd = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None)
+        our_thread = kernel32.GetCurrentThreadId()
+
+        # Attach our thread to the foreground thread's input queue
+        attached = False
+        if fg_thread != our_thread:
+            attached = bool(user32.AttachThreadInput(our_thread, fg_thread, True))
+
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
         self.activateWindow()
         self.raise_()
-        hwnd = int(self.winId())
-        if hwnd:
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
+
+        # Detach
+        if attached:
+            user32.AttachThreadInput(our_thread, fg_thread, False)
+
         self._search.setFocus()
-        self._search.activateWindow()
+        logger.debug("Focus forced: search.hasFocus=%s, isActiveWindow=%s",
+                      self._search.hasFocus(), self.isActiveWindow())
 
     def _restart_inactivity_timer(self) -> None:
         timeout = cfg.AUTO_HIDE_SECONDS
         if timeout > 0:
             self._inactivity_timer.start(timeout * 1000)
+            logger.debug("Inactivity timer restarted (%ds)", timeout)
         else:
             self._inactivity_timer.stop()
 
@@ -608,8 +636,24 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._on_search_changed("")
         self.adjustSize()
 
+    def eventFilter(self, obj: object, event: object) -> bool:
+        """Intercept Tab/Shift+Tab in the search box before Qt's focus chain."""
+        if obj is self._search and isinstance(event, QKeyEvent):
+            if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Tab:
+                self._restart_inactivity_timer()
+                if self._results:
+                    if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                        self._selected_index = max(self._selected_index - 1, 0)
+                    else:
+                        self._selected_index = min(self._selected_index + 1, len(self._results) - 1)
+                    self._update_results_display()
+                    self._ensure_visible()
+                return True  # consume the event
+        return super().eventFilter(obj, event)  # type: ignore[arg-type]
+
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
         key = event.key()
+        logger.debug("keyPressEvent: key=%s (0x%x), in_submenu=%s", event.text(), key, self._in_submenu)
         self._restart_inactivity_timer()
 
         if key == Qt.Key.Key_Escape:
