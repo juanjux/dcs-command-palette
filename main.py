@@ -188,6 +188,22 @@ def _add_palette_commands(commands: List[Command]) -> List[Command]:
             search_text="change aircraft plane switch module select",
             key_combo="",
         ),
+        Command(
+            identifier="__RESTART_PALETTE__",
+            description="Restart Palette",
+            category="Palette",
+            source=CommandSource.KEYBOARD,
+            search_text="restart reload palette refresh",
+            key_combo="",
+        ),
+        Command(
+            identifier="__EXIT_PALETTE__",
+            description="Exit Palette",
+            category="Palette",
+            source=CommandSource.KEYBOARD,
+            search_text="exit quit close palette stop shutdown",
+            key_combo="",
+        ),
     ]
     return builtins + commands
 
@@ -283,6 +299,11 @@ class App:
             self._change_aircraft()
         elif identifier == "__PALETTE_CONFIG__":
             self._open_config()
+        elif identifier == "__EXIT_PALETTE__":
+            logger.info("Exit requested from palette command.")
+            self.qapp.quit()
+        elif identifier == "__RESTART_PALETTE__":
+            self._restart()
 
     def _change_aircraft(self) -> None:
         if not self.dcs_dir:
@@ -323,6 +344,16 @@ class App:
             on_aircraft_changed=self._on_config_changed,
         )
         dialog.exec()
+
+    def _restart(self) -> None:
+        """Restart the palette by re-launching the same process."""
+        import subprocess
+        logger.info("Restarting palette...")
+        subprocess.Popen(
+            [sys.executable] + sys.argv,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        self.qapp.quit()
 
     def _cleanup_shutdown_file(self) -> None:
         """Remove any leftover shutdown file from a previous run."""
