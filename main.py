@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
 
 from commands import Command, CommandSource, load_all_commands
 from config import DCS_BIOS_HOST, DCS_BIOS_PORT, DCS_SAVED_GAMES, PROJECT_DIR
+from config_window import ConfigWindow
 from dcs_bios import DCSBiosSender
 from overlay import CommandPalette
 from setup import (
@@ -233,17 +234,26 @@ class App:
             self._load_commands()
             logger.info("Switched to %s", choice)
 
+    def _on_config_changed(self, new_dcs_dir: str, new_aircraft: str) -> None:
+        """Called when the config window applies changes."""
+        changed = False
+        if new_dcs_dir != self.dcs_dir:
+            self.dcs_dir = new_dcs_dir
+            changed = True
+        if new_aircraft != self.aircraft:
+            self.aircraft = new_aircraft
+            changed = True
+        if changed:
+            self._load_commands()
+
     def _open_config(self) -> None:
-        """Show a simple config dialog."""
-        settings = _read_settings()
-        msg = (
-            f"DCS Install Dir: {settings.get('dcs_install_dir', 'Not set')}\n"
-            f"Aircraft: {settings.get('aircraft', 'Not set')}\n"
-            f"DCS Saved Games: {settings.get('dcs_saved_games', 'Auto-detected')}\n\n"
-            f"Use 'Change Aircraft' command to switch planes.\n"
-            f"Delete settings.json to re-run setup."
+        """Show the settings dialog."""
+        dialog = ConfigWindow(
+            current_dcs_dir=self.dcs_dir or "",
+            current_aircraft=self.aircraft or "",
+            on_aircraft_changed=self._on_config_changed,
         )
-        QMessageBox.information(None, "DCS Command Palette - Settings", msg)
+        dialog.exec()
 
     def _cleanup_shutdown_file(self) -> None:
         """Remove any leftover shutdown file from a previous run."""
@@ -293,6 +303,9 @@ class App:
         show_action.triggered.connect(self.palette.show_palette)
         change_action = tray_menu.addAction("Change Aircraft")
         change_action.triggered.connect(self._change_aircraft)
+        settings_action = tray_menu.addAction("Settings")
+        settings_action.triggered.connect(self._open_config)
+        tray_menu.addSeparator()
         quit_action = tray_menu.addAction("Quit")
         quit_action.triggered.connect(self.qapp.quit)
         tray.setContextMenu(tray_menu)
