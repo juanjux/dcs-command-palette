@@ -46,8 +46,24 @@ VK_SPACE = 0x20
 VK_LCONTROL = 0xA2
 VK_RCONTROL = 0xA3
 
-# ctypes callback type for the hook
-HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, ctypes.c_uint, ctypes.c_void_p)
+# LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
+LRESULT = ctypes.c_long
+WPARAM = ctypes.c_ulonglong  # 64-bit on Win64
+LPARAM = ctypes.c_longlong
+_LLKeyboardProc = ctypes.CFUNCTYPE(LRESULT, ctypes.c_int, WPARAM, LPARAM)
+
+# Properly typed Win32 API calls
+_SetWindowsHookExW = ctypes.windll.user32.SetWindowsHookExW
+_SetWindowsHookExW.argtypes = [ctypes.c_int, _LLKeyboardProc, ctypes.c_void_p, ctypes.c_uint]
+_SetWindowsHookExW.restype = ctypes.c_void_p
+
+_UnhookWindowsHookEx = ctypes.windll.user32.UnhookWindowsHookEx
+_UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
+_UnhookWindowsHookEx.restype = ctypes.c_bool
+
+_CallNextHookEx = ctypes.windll.user32.CallNextHookEx
+_CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, WPARAM, LPARAM]
+_CallNextHookEx.restype = LRESULT
 
 
 class LowLevelKeyboardHook:
@@ -60,14 +76,15 @@ class LowLevelKeyboardHook:
 
     def __init__(self, callback: object) -> None:
         self._callback = callback
-        self._hook = None  # type: ignore[assignment]
+        self._hook: ctypes.c_void_p | None = None
         self._ctrl_pressed = False
         # Must keep a reference to prevent garbage collection
-        self._hook_proc = HOOKPROC(self._ll_keyboard_proc)
+        self._hook_proc = _LLKeyboardProc(self._ll_keyboard_proc)
 
-    def _ll_keyboard_proc(self, nCode: int, wParam: int, lParam: object) -> int:
+    def _ll_keyboard_proc(self, nCode: int, wParam: int, lParam: int) -> int:
         if nCode >= 0:
-            vk_code = ctypes.c_uint32.from_address(lParam).value  # type: ignore[arg-type]
+            # lParam points to KBDLLHOOKSTRUCT; first field is vkCode (DWORD)
+            vk_code = ctypes.c_uint32.from_address(lParam).value
 
             if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
                 if vk_code in (VK_LCONTROL, VK_RCONTROL):
@@ -83,12 +100,10 @@ class LowLevelKeyboardHook:
                 if vk_code in (VK_LCONTROL, VK_RCONTROL):
                     self._ctrl_pressed = False
 
-        return ctypes.windll.user32.CallNextHookEx(self._hook, nCode, wParam, lParam)
+        return _CallNextHookEx(self._hook, nCode, wParam, lParam)
 
     def install(self) -> bool:
-        self._hook = ctypes.windll.user32.SetWindowsHookExW(
-            WH_KEYBOARD_LL, self._hook_proc, None, 0,
-        )
+        self._hook = _SetWindowsHookExW(WH_KEYBOARD_LL, self._hook_proc, None, 0)
         if not self._hook:
             logger.error("Failed to install low-level keyboard hook (error %d)",
                          ctypes.windll.kernel32.GetLastError())
@@ -98,7 +113,7 @@ class LowLevelKeyboardHook:
 
     def uninstall(self) -> None:
         if self._hook:
-            ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
+            _UnhookWindowsHookEx(self._hook)
             self._hook = None
 
 
