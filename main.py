@@ -10,7 +10,7 @@ from typing import List, Optional
 import socket
 import threading
 
-from PyQt6.QtCore import QObject, pyqtSignal, QAbstractNativeEventFilter, QByteArray  # type: ignore[import-untyped]
+from PyQt6.QtCore import QObject, pyqtSignal  # type: ignore[import-untyped]
 from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QApplication, QSystemTrayIcon, QMenu, QInputDialog, QFileDialog, QMessageBox,
 )
@@ -38,27 +38,68 @@ from usage_tracker import UsageTracker
 
 logger = logging.getLogger(__name__)
 
-# Win32 constants
-MOD_CTRL = 0x0002
-MOD_NOREPEAT = 0x4000
+# Win32 low-level keyboard hook constants
+WH_KEYBOARD_LL = 13
+WM_KEYDOWN = 0x0100
+WM_SYSKEYDOWN = 0x0104
 VK_SPACE = 0x20
-HOTKEY_ID = 1
-WM_HOTKEY = 0x0312
+VK_LCONTROL = 0xA2
+VK_RCONTROL = 0xA3
+
+# ctypes callback type for the hook
+HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, ctypes.c_uint, ctypes.c_void_p)
 
 
-class HotkeyFilter(QAbstractNativeEventFilter):  # type: ignore[misc]
+class LowLevelKeyboardHook:
+    """Global keyboard hook that works even when DCS has focus.
+
+    Uses SetWindowsHookExW with WH_KEYBOARD_LL which intercepts keys
+    at a lower level than RegisterHotKey, working across all applications
+    including fullscreen games.
+    """
+
     def __init__(self, callback: object) -> None:
-        super().__init__()
         self._callback = callback
+        self._hook = None  # type: ignore[assignment]
+        self._ctrl_pressed = False
+        # Must keep a reference to prevent garbage collection
+        self._hook_proc = HOOKPROC(self._ll_keyboard_proc)
 
-    def nativeEventFilter(self, event_type: object, message: object) -> object:
-        if event_type == b"windows_generic_MSG" or event_type == QByteArray(b"windows_generic_MSG"):
-            msg_ptr = int(message)  # type: ignore[arg-type]
-            msg_id = ctypes.c_uint32.from_address(msg_ptr + ctypes.sizeof(ctypes.c_void_p)).value
-            if msg_id == WM_HOTKEY:
-                self._callback()  # type: ignore[operator]
-                return True, 0
-        return False, 0
+    def _ll_keyboard_proc(self, nCode: int, wParam: int, lParam: object) -> int:
+        if nCode >= 0:
+            vk_code = ctypes.c_uint32.from_address(lParam).value  # type: ignore[arg-type]
+
+            if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                if vk_code in (VK_LCONTROL, VK_RCONTROL):
+                    self._ctrl_pressed = True
+                elif vk_code == VK_SPACE and self._ctrl_pressed:
+                    self._ctrl_pressed = False
+                    if callable(self._callback):
+                        self._callback()  # type: ignore[operator]
+                    # Return 1 to consume the key (don't pass Ctrl+Space to DCS)
+                    return 1
+            else:
+                # Key up
+                if vk_code in (VK_LCONTROL, VK_RCONTROL):
+                    self._ctrl_pressed = False
+
+        return ctypes.windll.user32.CallNextHookEx(self._hook, nCode, wParam, lParam)
+
+    def install(self) -> bool:
+        self._hook = ctypes.windll.user32.SetWindowsHookExW(
+            WH_KEYBOARD_LL, self._hook_proc, None, 0,
+        )
+        if not self._hook:
+            logger.error("Failed to install low-level keyboard hook (error %d)",
+                         ctypes.windll.kernel32.GetLastError())
+            return False
+        logger.info("Low-level keyboard hook installed (Ctrl+Space)")
+        return True
+
+    def uninstall(self) -> None:
+        if self._hook:
+            ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
+            self._hook = None
 
 
 class HotkeyBridge(QObject):  # type: ignore[misc]
@@ -390,17 +431,11 @@ class App:
         )
         udp_listener.start()
 
-        # Register Ctrl+Space
-        registered = ctypes.windll.user32.RegisterHotKey(
-            None, HOTKEY_ID, MOD_CTRL | MOD_NOREPEAT, VK_SPACE
-        )
-        if not registered:
-            logger.warning("Failed to register Ctrl+Space hotkey.")
-        else:
-            logger.info("Hotkey: Ctrl+Space")
-
-        hotkey_filter = HotkeyFilter(lambda: bridge.triggered.emit())
-        self.qapp.installNativeEventFilter(hotkey_filter)
+        # Low-level keyboard hook (works even when DCS has focus)
+        kb_hook = LowLevelKeyboardHook(lambda: bridge.triggered.emit())
+        if not kb_hook.install():
+            logger.warning("Falling back to RegisterHotKey (won't work in fullscreen DCS)")
+            ctypes.windll.user32.RegisterHotKey(None, 1, 0x0002 | 0x4000, VK_SPACE)
 
         # System tray
         tray = QSystemTrayIcon()
@@ -428,7 +463,7 @@ class App:
 
         ret = self.qapp.exec()
 
-        ctypes.windll.user32.UnregisterHotKey(None, HOTKEY_ID)
+        kb_hook.uninstall()
         udp_listener.stop()
         self._cleanup_shutdown_file()
         self.usage.save()
