@@ -288,7 +288,12 @@ class App:
                 logger.info("Resolved unit type %r to module %r", aircraft_override, resolved)
                 self.aircraft: Optional[str] = resolved
             else:
-                logger.warning("Could not resolve unit type %r, using as-is", aircraft_override)
+                # Show what's available so the user can fix their --aircraft arg
+                available = list_installed_aircraft(self.dcs_dir)
+                logger.error(
+                    "Could not resolve aircraft %r. Available modules: %s",
+                    aircraft_override, ", ".join(available) if available else "(none found)",
+                )
                 self.aircraft = aircraft_override
             save_selected_aircraft(self.aircraft)
             logger.info("Aircraft set from command line: %s", self.aircraft)
@@ -468,6 +473,10 @@ class App:
         quit_action.triggered.connect(self.qapp.quit)
         tray.setContextMenu(tray_menu)
         tray.show()
+
+        # Clean up any leftover shutdown file RIGHT BEFORE starting the watcher,
+        # so we don't immediately self-kill from a stale file
+        self._cleanup_shutdown_file()
 
         # Periodically check for shutdown signal from Lua hook (every 2 seconds)
         from PyQt6.QtCore import QTimer  # type: ignore[import-untyped]

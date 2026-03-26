@@ -259,10 +259,14 @@ def resolve_unit_type_to_module(
 
     sig_input = _extract_sig(unit_type)
     if len(sig_input) >= 2:
+        sig_matches = []
         for module in installed:
             sig_module = _extract_sig(module)
             if sig_input == sig_module or sig_input.startswith(sig_module) or sig_module.startswith(sig_input):
-                return module
+                sig_matches.append(module)
+        if len(sig_matches) == 1:
+            return sig_matches[0]
+        # Multiple matches — ambiguous, return None so caller can report error
 
     return None
 
