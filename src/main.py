@@ -545,6 +545,7 @@ class App:
         settings = _read_settings()
         cfg.SHOW_IDENTIFIERS = bool(settings.get("show_identifiers", False))
         cfg.AUTO_HIDE_SECONDS = int(settings.get("auto_hide_seconds", 5))
+        cfg.OVERLAY_POSITION = str(settings.get("overlay_position", "top-center"))
         cfg.DCS_BIOS_HOST = str(settings.get("dcs_bios_host", "127.0.0.1"))
         cfg.DCS_BIOS_PORT = int(settings.get("dcs_bios_port", 7778))
 

@@ -76,6 +76,11 @@ DESCRIPTION_FONT_SIZE: int = 12
 SHOW_IDENTIFIERS: bool = False  # Show DCS-BIOS identifiers below the description
 AUTO_HIDE_SECONDS: int = 5  # Hide palette after N seconds of inactivity (0 = disabled)
 
+# Overlay position: "top", "center", "bottom" (vertical), combined with
+# "left", "center", "right" (horizontal). Format: "vertical-horizontal"
+# e.g. "top-center", "center-left", "bottom-right"
+OVERLAY_POSITION: str = "top-center"
+
 # Search ranking weights
 WEIGHT_FUZZY: float = 0.60
 WEIGHT_FREQUENCY: float = 0.25

@@ -189,6 +189,20 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         autohide_row.addStretch()
         display_layout.addLayout(autohide_row)
 
+        position_row = QHBoxLayout()
+        position_row.addWidget(QLabel("Overlay position:"))
+        from PyQt6.QtWidgets import QComboBox  # type: ignore[import-untyped]
+        self._position_combo = QComboBox()
+        self._position_combo.addItems([
+            "top-left", "top-center", "top-right",
+            "center-left", "center-center", "center-right",
+            "bottom-left", "bottom-center", "bottom-right",
+        ])
+        self._position_combo.setMaximumWidth(150)
+        position_row.addWidget(self._position_combo)
+        position_row.addStretch()
+        display_layout.addLayout(position_row)
+
         layout.addWidget(display_group)
 
         # --- Hotkey ---
@@ -318,6 +332,9 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         settings = _read_settings()
         self._show_ids_checkbox.setChecked(bool(settings.get("show_identifiers", False)))
         self._autohide_edit.setText(str(settings.get("auto_hide_seconds", 5)))
+        pos_idx = self._position_combo.findText(str(settings.get("overlay_position", "top-center")))
+        if pos_idx >= 0:
+            self._position_combo.setCurrentIndex(pos_idx)
 
         self._pending_hotkey = str(settings.get("hotkey", "Ctrl+Space"))
         self._hotkey_label.setText(self._pending_hotkey)
@@ -563,6 +580,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         except ValueError:
             settings["auto_hide_seconds"] = 5
         settings["hotkey"] = self._pending_hotkey
+        settings["overlay_position"] = self._position_combo.currentText()
         settings["dcs_bios_host"] = self._bios_ip_edit.text().strip() or "127.0.0.1"
         try:
             settings["dcs_bios_port"] = int(self._bios_port_edit.text())

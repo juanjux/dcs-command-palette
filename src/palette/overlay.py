@@ -536,6 +536,37 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             if self.isVisible() and not self._in_submenu:
                 self._on_search_changed(self._search.text())
 
+    def _calc_position(self, screen_w: int, screen_h: int) -> tuple[int, int]:
+        """Calculate overlay position based on OVERLAY_POSITION setting.
+
+        Format: "vertical-horizontal" where:
+        - vertical: top (20%), center (50%), bottom (80%)
+        - horizontal: left (10%), center (50%), right (90%)
+        """
+        pos = cfg.OVERLAY_POSITION.lower().strip()
+        parts = pos.split("-", 1)
+        v = parts[0] if parts else "top"
+        h = parts[1] if len(parts) > 1 else "center"
+
+        # Horizontal
+        if h == "left":
+            x = int(screen_w * 0.05)
+        elif h == "right":
+            x = int(screen_w * 0.95) - self.width()
+        else:  # center
+            x = (screen_w - self.width()) // 2
+
+        # Vertical — estimate overlay height (~60px search + results)
+        overlay_h = min(OVERLAY_MAX_HEIGHT, 60 + len(self._results) * 50)
+        if v == "top":
+            y = int(screen_h * 0.10)
+        elif v == "bottom":
+            y = int(screen_h * 0.85) - overlay_h
+        else:  # center
+            y = (screen_h - overlay_h) // 2
+
+        return x, y
+
     def _restart_inactivity_timer(self) -> None:
         timeout = cfg.AUTO_HIDE_SECONDS
         if timeout > 0:
@@ -558,8 +589,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         screen = QApplication.primaryScreen()
         if screen:
             geo = screen.geometry()
-            x = (geo.width() - self.width()) // 2
-            y = int(geo.height() * 0.2)
+            x, y = self._calc_position(geo.width(), geo.height())
             self.move(x, y)
 
         self.setWindowOpacity(0.0)
