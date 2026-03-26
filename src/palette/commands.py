@@ -116,7 +116,7 @@ def _enrich_position_labels(
     # Build a map of description -> list of (pos_name, value_down) from keyboard entries
     directional = {"ccw", "cw", "up", "down", "pull", "stow", "pull/stow", "cycle",
                     "toggle", "press", "release", "held left/down", "centered",
-                    "held right/up", "aug pull"}
+                    "held right/up", "aug pull", "ccw/left", "cw/right"}
     desc_positions: Dict[str, List[_PositionInfo]] = {}
     for entry in kb_entries:
         if " - " not in entry.name:
