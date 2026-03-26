@@ -487,6 +487,36 @@ class App:
         sys.exit(ret)
 
 
+def _get_version() -> str:
+    """Read version from pyproject.toml."""
+    try:
+        toml_path = os.path.join(PROJECT_DIR, "pyproject.toml")
+        with open(toml_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("version"):
+                    # version = "0.1.0"
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except (OSError, IndexError):
+        pass
+    return "unknown"
+
+
+def _get_git_commit() -> str:
+    """Get the current git short commit hash."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=PROJECT_DIR,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "unknown"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="DCS Command Palette")
     parser.add_argument(
@@ -501,7 +531,7 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
-    logger.info("DCS Command Palette starting")
+    logger.info("DCS Command Palette v%s (%s)", _get_version(), _get_git_commit())
 
     app = App(aircraft_override=args.aircraft)
     app.run()
