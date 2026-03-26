@@ -151,9 +151,11 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         self._layout.setContentsMargins(12, 8, 12, 8)
         self._layout.setSpacing(6)
 
-    def set_command(self, cmd: Command, sender: DCSBiosSender) -> None:
+    def set_command(self, cmd: Command, sender: DCSBiosSender,
+                    current_value: Optional[int] = None) -> None:
         self.command = cmd
         self._sender = sender
+        self._current_value = current_value
         self._buttons: List[QPushButton] = []
         self._clear()
 
@@ -171,7 +173,6 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             if cmd.position_labels:
                 self._add_position_buttons(cmd)
             elif cmd.max_value > 1:
-                # Selector without named positions — show generic buttons
                 self._add_generic_positions(cmd)
 
         if cmd.has_fixed_step or cmd.has_variable_step:
@@ -180,9 +181,10 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         if cmd.control_type in ("limited_dial", "analog_dial") and cmd.max_value is not None:
             self._add_slider(cmd)
 
-        # Focus the first button so Enter/arrows work immediately
+        # Focus the current position button, or the first button
+        focus_idx = current_value if current_value is not None and current_value < len(self._buttons) else 0
         if self._buttons:
-            self._buttons[0].setFocus()
+            self._buttons[focus_idx].setFocus()
 
     def _clear(self) -> None:
         while self._layout.count():
@@ -200,17 +202,29 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             if w:
                 w.deleteLater()
 
+    def _make_btn_style(self, is_current: bool) -> str:
+        if is_current:
+            return (
+                f"QPushButton {{ color: #ffffff; background: rgba(60,120,220,180); "
+                f"border: 2px solid {ACCENT_COLOR}; border-radius: 4px; "
+                f"padding: 8px 16px; text-align: left; font-size: 13px; font-weight: bold; }}"
+                f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,220); }}"
+            )
+        return (
+            f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
+            f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
+            f"padding: 8px 16px; text-align: left; font-size: 13px; }}"
+            f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
+        )
+
     def _add_position_buttons(self, cmd: Command) -> None:
         if not cmd.position_labels:
             return
         for pos, label in sorted(cmd.position_labels.items()):
-            btn = QPushButton(f"  {pos} - {label}")
-            btn.setStyleSheet(
-                f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
-                f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
-                f"padding: 8px 16px; text-align: left; font-size: 13px; }}"
-                f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
-            )
+            is_current = self._current_value is not None and pos == self._current_value
+            marker = " ◄" if is_current else ""
+            btn = QPushButton(f"  {label}{marker}")
+            btn.setStyleSheet(self._make_btn_style(is_current))
             btn.clicked.connect(lambda checked, p=pos: self._on_position(p))
             self._buttons.append(btn)
             self._layout.addWidget(btn)
@@ -220,13 +234,10 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         if cmd.max_value is None:
             return
         for pos in range(cmd.max_value + 1):
-            btn = QPushButton(f"  Position {pos}")
-            btn.setStyleSheet(
-                f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
-                f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
-                f"padding: 8px 16px; text-align: left; font-size: 13px; }}"
-                f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
-            )
+            is_current = self._current_value is not None and pos == self._current_value
+            marker = " ◄" if is_current else ""
+            btn = QPushButton(f"  Position {pos}{marker}")
+            btn.setStyleSheet(self._make_btn_style(is_current))
             btn.clicked.connect(lambda checked, p=pos: self._on_position(p))
             self._buttons.append(btn)
             self._layout.addWidget(btn)
@@ -611,28 +622,22 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             self._sender.inc(cmd.identifier)
         self.hide_palette()
 
-    def _get_current_state_text(self, cmd: Command) -> str:
-        """Get a human-readable current state string for a BIOS command."""
+    def _get_current_bios_value(self, cmd: Command) -> Optional[int]:
+        """Get the current integer value of a BIOS command from the live state."""
         if (self._state_reader is None
                 or cmd.output_address is None
                 or cmd.output_mask is None
                 or cmd.output_shift is None):
-            return ""
-        value = self._state_reader.get_value(cmd.output_address, cmd.output_mask, cmd.output_shift)
-        if cmd.position_labels and value in cmd.position_labels:
-            return f"Current: {cmd.position_labels[value]}"
-        return f"Current: {value}"
+            return None
+        return self._state_reader.get_value(cmd.output_address, cmd.output_mask, cmd.output_shift)
 
     def _show_submenu(self, cmd: Command) -> None:
         self._in_submenu = True
         self._scroll.hide()
         self._search.setReadOnly(True)
-        state_text = self._get_current_state_text(cmd)
-        title = f"{cmd.identifier} - {cmd.description}"
-        if state_text:
-            title += f"  [{state_text}]"
-        self._search.setText(title)
-        self._submenu.set_command(cmd, self._sender)
+        self._search.setText(f"{cmd.description}")
+        current_value = self._get_current_bios_value(cmd)
+        self._submenu.set_command(cmd, self._sender, current_value=current_value)
         # Install event filter on all submenu buttons so Tab is intercepted
         for btn in self._submenu._buttons:
             btn.installEventFilter(self)

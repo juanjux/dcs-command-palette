@@ -1,6 +1,7 @@
 """Settings dialog for DCS Command Palette."""
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import shutil
@@ -92,6 +93,29 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
             Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Dialog
         )
 
+    def showEvent(self, event: object) -> None:
+        """Force the window to foreground when shown."""
+        super().showEvent(event)  # type: ignore[arg-type]
+        from PyQt6.QtCore import QTimer  # type: ignore[import-untyped]
+        QTimer.singleShot(50, self._force_foreground)
+
+    def _force_foreground(self) -> None:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        hwnd = int(self.winId())
+        fg_hwnd = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None)
+        our_thread = kernel32.GetCurrentThreadId()
+        attached = False
+        if fg_thread != our_thread:
+            attached = bool(user32.AttachThreadInput(our_thread, fg_thread, True))
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
+        self.activateWindow()
+        self.raise_()
+        if attached:
+            user32.AttachThreadInput(our_thread, fg_thread, False)
+
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -156,6 +180,30 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         display_layout.addLayout(autohide_row)
 
         layout.addWidget(display_group)
+
+        # --- Hotkey ---
+        hotkey_group = QGroupBox("Palette Shortcut")
+        hotkey_layout = QHBoxLayout(hotkey_group)
+
+        hotkey_layout.addWidget(QLabel("Toggle palette:"))
+        self._hotkey_label = QLabel()
+        self._hotkey_label.setStyleSheet(
+            "font-weight: bold; font-size: 13px; padding: 4px 8px; "
+            "background: rgba(50,50,70,200); border: 1px solid rgba(100,100,140,150); "
+            "border-radius: 4px; min-width: 120px;"
+        )
+        self._hotkey_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hotkey_layout.addWidget(self._hotkey_label, stretch=1)
+
+        self._set_hotkey_btn = QPushButton("Set Shortcut...")
+        self._set_hotkey_btn.clicked.connect(self._capture_hotkey)
+        hotkey_layout.addWidget(self._set_hotkey_btn)
+
+        reset_hotkey_btn = QPushButton("Reset")
+        reset_hotkey_btn.clicked.connect(self._reset_hotkey)
+        hotkey_layout.addWidget(reset_hotkey_btn)
+
+        layout.addWidget(hotkey_group)
 
         # --- Lua Hook ---
         hook_group = QGroupBox("DCS Lua Hook (auto-start/stop)")
@@ -224,6 +272,9 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         settings = _read_settings()
         self._show_ids_checkbox.setChecked(bool(settings.get("show_identifiers", False)))
         self._autohide_edit.setText(str(settings.get("auto_hide_seconds", 5)))
+
+        self._pending_hotkey = str(settings.get("hotkey", "Ctrl+Space"))
+        self._hotkey_label.setText(self._pending_hotkey)
 
     def _refresh_aircraft_list(self) -> None:
         self._aircraft_combo.blockSignals(True)
@@ -328,6 +379,17 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         self._update_hook_status()
 
+    def _capture_hotkey(self) -> None:
+        """Open a dialog that waits for a key/button press to assign as hotkey."""
+        dialog = _HotkeyCaptureDialog(self)
+        if dialog.exec():
+            self._pending_hotkey = dialog.captured_combo
+            self._hotkey_label.setText(self._pending_hotkey or "Ctrl+Space")
+
+    def _reset_hotkey(self) -> None:
+        self._pending_hotkey = "Ctrl+Space"
+        self._hotkey_label.setText("Ctrl+Space")
+
     def _apply_and_close(self) -> None:
         settings = _read_settings()
         settings["dcs_install_dir"] = self._dcs_dir
@@ -337,10 +399,110 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
             settings["auto_hide_seconds"] = int(self._autohide_edit.text())
         except ValueError:
             settings["auto_hide_seconds"] = 5
+        settings["hotkey"] = self._pending_hotkey
         _save_settings(settings)
-        logger.info("Settings saved: dcs_dir=%s, aircraft=%s", self._dcs_dir, self._aircraft)
+        logger.info("Settings saved: dcs_dir=%s, aircraft=%s, hotkey=%s",
+                     self._dcs_dir, self._aircraft, self._pending_hotkey)
 
         if callable(self._on_aircraft_changed):
             self._on_aircraft_changed(self._dcs_dir, self._aircraft)
 
         self.accept()
+
+
+class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
+    """Modal dialog that captures a key combination or joystick button."""
+
+    def __init__(self, parent: object = None) -> None:
+        super().__init__(parent)  # type: ignore[arg-type]
+        self.captured_combo: str = ""
+        self.setWindowTitle("Set Shortcut")
+        self.setMinimumSize(350, 120)
+        self.setWindowFlags(
+            Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Dialog
+        )
+
+        layout = QVBoxLayout(self)
+        self._label = QLabel("Press the desired key combination...\n\n(Press Escape to cancel)")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setStyleSheet("font-size: 14px; padding: 16px;")
+        layout.addWidget(self._label)
+
+        self._modifiers: list[str] = []
+
+    def keyPressEvent(self, event: object) -> None:
+        from PyQt6.QtGui import QKeyEvent  # type: ignore[import-untyped]
+        if not isinstance(event, QKeyEvent):
+            return
+
+        key = event.key()
+
+        # Escape cancels
+        if key == Qt.Key.Key_Escape:
+            self.reject()
+            return
+
+        # Collect modifiers
+        mods = event.modifiers()
+        parts: list[str] = []
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            parts.append("Ctrl")
+        if mods & Qt.KeyboardModifier.AltModifier:
+            parts.append("Alt")
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            parts.append("Shift")
+
+        # Skip if only a modifier key was pressed (wait for the actual key)
+        modifier_keys = {
+            Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Shift,
+            Qt.Key.Key_Meta, Qt.Key.Key_AltGr,
+        }
+        if key in modifier_keys:
+            self._label.setText(f"{'+'.join(parts)}+...\n\n(Press Escape to cancel)")
+            return
+
+        # Map the key to a readable name
+        key_name = _qt_key_to_name(key)
+        if key_name:
+            parts.append(key_name)
+
+        if parts:
+            self.captured_combo = "+".join(parts)
+            self._label.setText(f"Captured: {self.captured_combo}")
+            # Small delay so user sees what was captured
+            from PyQt6.QtCore import QTimer  # type: ignore[import-untyped]
+            QTimer.singleShot(400, self.accept)
+
+
+def _qt_key_to_name(key: int) -> str:
+    """Convert a Qt key code to a human-readable name."""
+    from PyQt6.QtCore import Qt as QtKeys  # type: ignore[import-untyped]
+
+    _SPECIAL: dict[int, str] = {
+        QtKeys.Key.Key_Space: "Space",
+        QtKeys.Key.Key_Return: "Enter",
+        QtKeys.Key.Key_Enter: "Enter",
+        QtKeys.Key.Key_Tab: "Tab",
+        QtKeys.Key.Key_Backspace: "Backspace",
+        QtKeys.Key.Key_Delete: "Delete",
+        QtKeys.Key.Key_Insert: "Insert",
+        QtKeys.Key.Key_Home: "Home",
+        QtKeys.Key.Key_End: "End",
+        QtKeys.Key.Key_PageUp: "PageUp",
+        QtKeys.Key.Key_PageDown: "PageDown",
+        QtKeys.Key.Key_Up: "Up",
+        QtKeys.Key.Key_Down: "Down",
+        QtKeys.Key.Key_Left: "Left",
+        QtKeys.Key.Key_Right: "Right",
+        QtKeys.Key.Key_Pause: "Pause",
+    }
+    if key in _SPECIAL:
+        return _SPECIAL[key]
+
+    # F1-F24
+    if QtKeys.Key.Key_F1 <= key <= QtKeys.Key.Key_F24:
+        return f"F{key - QtKeys.Key.Key_F1 + 1}"
+
+    # Regular character
+    char = chr(key) if 0x20 <= key <= 0x7E else ""
+    return char.upper() if char else f"Key_{key}"
