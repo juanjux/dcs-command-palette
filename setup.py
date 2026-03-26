@@ -185,6 +185,43 @@ def list_installed_aircraft(
     return sorted(aircraft)
 
 
+def resolve_unit_type_to_module(
+    dcs_install_dir: str, unit_type: str,
+    dcs_saved_games: str = DCS_SAVED_GAMES,
+) -> Optional[str]:
+    """Resolve a DCS unit type name to an aircraft module folder name.
+
+    DCS.getPlayerUnitType() returns names like 'FA-18C_hornet', but the module
+    folder is 'FA-18C'. This function finds the matching module.
+
+    Tries:
+    1. Exact match (unit_type == module folder name)
+    2. Module folder is a prefix of the unit type (FA-18C matches FA-18C_hornet)
+    3. Fuzzy: strip common suffixes and compare
+    """
+    installed = list_installed_aircraft(dcs_install_dir, dcs_saved_games)
+
+    # Exact match
+    if unit_type in installed:
+        return unit_type
+
+    # Module is a prefix of unit_type (e.g., "FA-18C" is prefix of "FA-18C_hornet")
+    # Pick the longest matching prefix
+    best: Optional[str] = None
+    for module in installed:
+        if unit_type.startswith(module) and (best is None or len(module) > len(best)):
+            best = module
+    if best:
+        return best
+
+    # Unit type is a prefix of module (e.g., unit type "F-14" matches "F-14A-135-GR")
+    for module in installed:
+        if module.startswith(unit_type):
+            return module
+
+    return None
+
+
 def get_aircraft_input_name(dcs_install_dir: str, aircraft_module: str) -> Optional[str]:
     """Find the Input folder name for an aircraft module.
 

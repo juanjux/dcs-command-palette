@@ -28,6 +28,7 @@ from setup import (
     get_aircraft_saved_name,
     get_selected_aircraft,
     list_installed_aircraft,
+    resolve_unit_type_to_module,
     save_dcs_install_dir,
     save_selected_aircraft,
     _read_settings,
@@ -136,14 +137,18 @@ def _ensure_dcs_install_dir(app: QApplication) -> Optional[str]:
 
 def _ensure_aircraft(dcs_dir: str) -> Optional[str]:
     """Get selected aircraft, or ask user to pick one."""
-    aircraft = get_selected_aircraft()
-    if aircraft:
-        return aircraft
-
     aircraft_list = list_installed_aircraft(dcs_dir)
     if not aircraft_list:
         logger.warning("No aircraft found.")
         return None
+
+    # Check if the saved aircraft is still valid (installed)
+    saved = get_selected_aircraft()
+    if saved and saved in aircraft_list:
+        return saved
+
+    if saved:
+        logger.warning("Saved aircraft %r not found in installed modules, re-selecting.", saved)
 
     # Default to FA-18C if available
     if "FA-18C" in aircraft_list:
@@ -205,9 +210,16 @@ class App:
 
         # Use CLI-provided aircraft if given, otherwise interactive selection
         if aircraft_override:
-            self.aircraft: Optional[str] = aircraft_override
-            save_selected_aircraft(aircraft_override)
-            logger.info("Aircraft set from command line: %s", aircraft_override)
+            # Resolve DCS unit type (e.g., "FA-18C_hornet") to module name ("FA-18C")
+            resolved = resolve_unit_type_to_module(self.dcs_dir, aircraft_override)
+            if resolved:
+                logger.info("Resolved unit type %r to module %r", aircraft_override, resolved)
+                self.aircraft: Optional[str] = resolved
+            else:
+                logger.warning("Could not resolve unit type %r, using as-is", aircraft_override)
+                self.aircraft = aircraft_override
+            save_selected_aircraft(self.aircraft)
+            logger.info("Aircraft set from command line: %s", self.aircraft)
         else:
             self.aircraft = _ensure_aircraft(self.dcs_dir)
         if not self.aircraft:
