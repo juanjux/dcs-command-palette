@@ -93,18 +93,34 @@ class ResultItem(QWidget):  # type: ignore[misc]
 
     def set_command(self, cmd: Command) -> None:
         self.command = cmd
-        # Primary line (white): user-friendly description
+        # Keyboard commands with no binding are dimmed
+        unbound = (cmd.source == CommandSource.KEYBOARD and not cmd.key_combo
+                   and not cmd.identifier.startswith("__"))
+        dim = "#555555" if unbound else IDENTIFIER_COLOR
+        dim_desc = "#444444" if unbound else TEXT_MUTED_COLOR
+
         self.id_label.setText(cmd.description)
-        # Secondary line (gray): identifier, only shown if enabled
+        self.id_label.setStyleSheet(
+            f"color: {dim}; font-size: {IDENTIFIER_FONT_SIZE}px; "
+            f"font-family: 'Consolas', 'Courier New', monospace; font-weight: bold;"
+        )
         if cfg.SHOW_IDENTIFIERS:
             self.desc_label.setText(cmd.identifier)
+            self.desc_label.setStyleSheet(f"color: {dim_desc}; font-size: {DESCRIPTION_FONT_SIZE}px;")
             self.desc_label.show()
         else:
             self.desc_label.setText("")
             self.desc_label.hide()
         cat = cmd.category if len(cmd.category) <= 30 else cmd.category[:27] + "..."
         self.cat_label.setText(cat)
-        self.combo_label.setText(cmd.key_combo if cmd.key_combo else "")
+        if unbound:
+            self.combo_label.setText("no key")
+            self.combo_label.setStyleSheet(
+                f"color: #664444; font-size: 10px; font-style: italic;"
+            )
+        else:
+            self.combo_label.setText(cmd.key_combo if cmd.key_combo else "")
+            self.combo_label.setStyleSheet(f"color: {TEXT_MUTED_COLOR}; font-size: 10px;")
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
