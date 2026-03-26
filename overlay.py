@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
 )
 
 from commands import Command, CommandSource
+import config as cfg
 from config import (
     ACCENT_COLOR,
     BG_COLOR,
@@ -92,9 +93,15 @@ class ResultItem(QWidget):  # type: ignore[misc]
 
     def set_command(self, cmd: Command) -> None:
         self.command = cmd
-        self.id_label.setText(cmd.description if cmd.source == CommandSource.KEYBOARD else cmd.identifier)
-        desc = cmd.identifier if cmd.source == CommandSource.KEYBOARD else cmd.description
-        self.desc_label.setText(desc)
+        # Primary line (white): user-friendly description
+        self.id_label.setText(cmd.description)
+        # Secondary line (gray): identifier, only shown if enabled
+        if cfg.SHOW_IDENTIFIERS:
+            self.desc_label.setText(cmd.identifier)
+            self.desc_label.show()
+        else:
+            self.desc_label.setText("")
+            self.desc_label.hide()
         cat = cmd.category if len(cmd.category) <= 30 else cmd.category[:27] + "..."
         self.cat_label.setText(cat)
         self.combo_label.setText(cmd.key_combo if cmd.key_combo else "")

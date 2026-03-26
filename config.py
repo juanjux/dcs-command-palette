@@ -45,6 +45,9 @@ SEARCH_FONT_SIZE: int = 18
 IDENTIFIER_FONT_SIZE: int = 14
 DESCRIPTION_FONT_SIZE: int = 12
 
+# Display options
+SHOW_IDENTIFIERS: bool = False  # Show DCS-BIOS identifiers below the description
+
 # Search ranking weights
 WEIGHT_FUZZY: float = 0.60
 WEIGHT_FREQUENCY: float = 0.25

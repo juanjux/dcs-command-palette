@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
 )
 
 from commands import Command, CommandSource, load_all_commands
+import config as cfg
 from config import DCS_BIOS_HOST, DCS_BIOS_PORT, DCS_SAVED_GAMES, PALETTE_LISTEN_PORT, PROJECT_DIR
 from config_window import ConfigWindow
 from dcs_bios import DCSBiosSender
@@ -213,6 +214,7 @@ class App:
             logger.error("No aircraft selected. Exiting.")
             sys.exit(1)
 
+        self._load_display_settings()
         self.usage = UsageTracker()
         self.sender = DCSBiosSender()
         self.palette: Optional[CommandPalette] = None
@@ -220,6 +222,12 @@ class App:
 
         # Clean up any leftover shutdown file
         self._cleanup_shutdown_file()
+
+    @staticmethod
+    def _load_display_settings() -> None:
+        """Load display preferences from settings.json into config module."""
+        settings = _read_settings()
+        cfg.SHOW_IDENTIFIERS = bool(settings.get("show_identifiers", False))
 
     def _load_commands(self) -> None:
         """Load (or reload) commands for the current aircraft."""
@@ -284,6 +292,7 @@ class App:
 
     def _on_config_changed(self, new_dcs_dir: str, new_aircraft: str) -> None:
         """Called when the config window applies changes."""
+        self._load_display_settings()
         changed = False
         if new_dcs_dir != self.dcs_dir:
             self.dcs_dir = new_dcs_dir

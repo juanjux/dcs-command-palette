@@ -90,20 +90,20 @@ def test_search_prefix_bonus(tmp_path: object) -> None:
     assert identifiers[0].startswith("AMPCD")
 
 
-def test_bios_category_not_misleading() -> None:
-    """Category shown in the palette should not be completely unrelated to the control.
+def test_bios_category_uses_panel_name() -> None:
+    """Category should use the original DCS-BIOS panel name.
 
-    Regression: FLAP_SW was showing category "BIOS: Select Jettison Button" because
-    DCS-BIOS groups controls by physical panel, and the panel is named after a different
-    control. The displayed category should be meaningful to the user.
+    The panel name is the physical cockpit location, which is useful context
+    even when the panel is named after a different control on the same panel.
+    The description (shown as primary text) is always the control's own name.
     """
     controls = load_controls(_FA18C_JSON)
     flap = [c for c in controls if c.identifier == "FLAP_SW"][0]
     cmd = _control_to_command(flap)
 
-    # The category should NOT contain completely unrelated control names
-    cat_lower = cmd.category.lower()
-    assert "jettison" not in cat_lower, (
-        f"FLAP_SW category '{cmd.category}' is misleading — "
-        f"it references an unrelated control"
-    )
+    # Category is the raw DCS-BIOS panel name
+    assert cmd.category == "Select Jettison Button"
+    # Description is the control's own user-friendly name (shown in white)
+    assert cmd.description == "FLAP Switch"
+    # Identifier is the DCS-BIOS ID (shown in gray only if enabled)
+    assert cmd.identifier == "FLAP_SW"

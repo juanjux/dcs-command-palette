@@ -8,6 +8,7 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt  # type: ignore[import-untyped]
 from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -111,6 +112,15 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         layout.addWidget(aircraft_group)
 
+        # --- Display Options ---
+        display_group = QGroupBox("Display")
+        display_layout = QVBoxLayout(display_group)
+
+        self._show_ids_checkbox = QCheckBox("Show DCS-BIOS identifiers (e.g., FLAP_SW) below command names")
+        display_layout.addWidget(self._show_ids_checkbox)
+
+        layout.addWidget(display_group)
+
         # --- Lua Hook ---
         hook_group = QGroupBox("DCS Lua Hook (auto-start/stop)")
         hook_layout = QVBoxLayout(hook_group)
@@ -170,6 +180,9 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._dir_edit.setText(self._dcs_dir)
         self._refresh_aircraft_list()
         self._update_hook_status()
+
+        settings = _read_settings()
+        self._show_ids_checkbox.setChecked(bool(settings.get("show_identifiers", False)))
 
     def _refresh_aircraft_list(self) -> None:
         self._aircraft_combo.blockSignals(True)
@@ -278,6 +291,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         settings = _read_settings()
         settings["dcs_install_dir"] = self._dcs_dir
         settings["aircraft"] = self._aircraft
+        settings["show_identifiers"] = self._show_ids_checkbox.isChecked()
         _save_settings(settings)
         logger.info("Settings saved: dcs_dir=%s, aircraft=%s", self._dcs_dir, self._aircraft)
 
