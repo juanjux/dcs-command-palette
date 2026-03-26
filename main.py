@@ -82,23 +82,27 @@ class LowLevelKeyboardHook:
         self._hook_proc = _LLKeyboardProc(self._ll_keyboard_proc)
 
     def _ll_keyboard_proc(self, nCode: int, wParam: int, lParam: int) -> int:
-        if nCode >= 0:
-            # lParam points to KBDLLHOOKSTRUCT; first field is vkCode (DWORD)
-            vk_code = ctypes.c_uint32.from_address(lParam).value
+        try:
+            if nCode >= 0:
+                # lParam points to KBDLLHOOKSTRUCT; first field is vkCode (DWORD)
+                vk_code = ctypes.c_uint32.from_address(lParam).value
 
-            if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
-                if vk_code in (VK_LCONTROL, VK_RCONTROL):
-                    self._ctrl_pressed = True
-                elif vk_code == VK_SPACE and self._ctrl_pressed:
-                    self._ctrl_pressed = False
-                    if callable(self._callback):
-                        self._callback()  # type: ignore[operator]
-                    # Return 1 to consume the key (don't pass Ctrl+Space to DCS)
-                    return 1
-            else:
-                # Key up
-                if vk_code in (VK_LCONTROL, VK_RCONTROL):
-                    self._ctrl_pressed = False
+                if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                    if vk_code in (VK_LCONTROL, VK_RCONTROL):
+                        self._ctrl_pressed = True
+                    elif vk_code == VK_SPACE and self._ctrl_pressed:
+                        self._ctrl_pressed = False
+                        if callable(self._callback):
+                            self._callback()  # type: ignore[operator]
+                        # Return 1 to consume the key (don't pass Ctrl+Space to DCS)
+                        return 1
+                else:
+                    # Key up
+                    if vk_code in (VK_LCONTROL, VK_RCONTROL):
+                        self._ctrl_pressed = False
+        except Exception:
+            # Never let exceptions (including KeyboardInterrupt) crash the hook
+            pass
 
         return _CallNextHookEx(self._hook, nCode, wParam, lParam)
 
@@ -541,6 +545,10 @@ def main() -> None:
 
     setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
     logger.info("DCS Command Palette v%s (%s)", _get_version(), _get_git_commit())
+
+    # Allow Ctrl+C to cleanly quit
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     app = App(aircraft_override=args.aircraft)
     app.run()
