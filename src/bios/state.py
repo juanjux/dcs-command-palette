@@ -64,16 +64,18 @@ class BiosStateReader:
         try:
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # On Windows, SO_REUSEADDR allows multiple processes to share a multicast port
             self._sock.settimeout(2.0)
             self._sock.bind(("", self._port))
 
-            # Join the multicast group
+            # Join the multicast group on all interfaces
             mreq = struct.pack(
                 "4s4s",
                 socket.inet_aton(self._multicast_addr),
                 socket.inet_aton("0.0.0.0"),
             )
             self._sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            logger.debug("Joined multicast group %s on port %d", self._multicast_addr, self._port)
         except OSError as e:
             logger.warning("Could not bind DCS-BIOS multicast listener (%s:%d): %s",
                            self._multicast_addr, self._port, e)
@@ -100,6 +102,7 @@ class BiosStateReader:
         return (raw & mask) >> shift_by
 
     def _listen(self) -> None:
+        first_packet = True
         while self._running:
             try:
                 data, _addr = self._sock.recvfrom(4096)  # type: ignore[union-attr]
@@ -109,6 +112,10 @@ class BiosStateReader:
                 if self._running:
                     logger.debug("DCS-BIOS export socket closed")
                 break
+
+            if first_packet:
+                logger.info("DCS-BIOS data received (%d bytes from %s) - connected!", len(data), _addr)
+                first_packet = False
 
             self._process_packet(data)
 

@@ -417,6 +417,12 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._inactivity_timer.setSingleShot(True)
         self._inactivity_timer.timeout.connect(self.hide_palette)
 
+        # Periodic BIOS connection status check — refresh results if status changes
+        self._last_bios_connected = False
+        self._bios_check_timer = QTimer()
+        self._bios_check_timer.timeout.connect(self._check_bios_status)
+        self._bios_check_timer.start(2000)  # check every 2 seconds
+
     def _setup_window(self) -> None:
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint
@@ -516,6 +522,19 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._search.setFocus()
         logger.debug("Focus forced: search.hasFocus=%s, isActiveWindow=%s",
                       self._search.hasFocus(), self.isActiveWindow())
+
+    def _check_bios_status(self) -> None:
+        """Refresh result items if BIOS connection status changed."""
+        if not self._state_reader:
+            return
+        connected = self._state_reader.connected
+        if connected != self._last_bios_connected:
+            self._last_bios_connected = connected
+            logger.info("DCS-BIOS connection status changed: %s",
+                        "connected" if connected else "disconnected")
+            # Re-render visible results so dimming/warnings update
+            if self.isVisible() and not self._in_submenu:
+                self._on_search_changed(self._search.text())
 
     def _restart_inactivity_timer(self) -> None:
         timeout = cfg.AUTO_HIDE_SECONDS
