@@ -640,6 +640,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self.adjustSize()
 
     def _on_submenu_action(self, identifier: str, argument: str) -> None:
+        logger.info("Sending DCS-BIOS: %s %s", identifier, argument)
         self._sender.send(identifier, argument)
         self._restart_inactivity_timer()
 

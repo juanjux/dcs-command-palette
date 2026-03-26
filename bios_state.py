@@ -19,6 +19,7 @@ from typing import Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+BIOS_MULTICAST_ADDR = "239.255.50.10"
 BIOS_EXPORT_PORT = 5010
 FRAME_SIZE = 65536
 
@@ -29,7 +30,12 @@ SYNC_ADDR = 0x5555
 class BiosStateReader:
     """Reads DCS-BIOS export stream and maintains current cockpit state."""
 
-    def __init__(self, port: int = BIOS_EXPORT_PORT) -> None:
+    def __init__(
+        self,
+        multicast_addr: str = BIOS_MULTICAST_ADDR,
+        port: int = BIOS_EXPORT_PORT,
+    ) -> None:
+        self._multicast_addr = multicast_addr
         self._port = port
         self._frame = bytearray(FRAME_SIZE)
         self._lock = threading.Lock()
@@ -41,23 +47,35 @@ class BiosStateReader:
     def start(self, on_frame_update: Optional[Callable[[], None]] = None) -> bool:
         """Start listening for DCS-BIOS export data.
 
+        DCS-BIOS sends state updates via UDP multicast to 239.255.50.10:5010.
+        We join the multicast group to receive the data.
+
         Args:
             on_frame_update: Optional callback invoked after each complete frame update.
         """
         self._on_frame_update = on_frame_update
         try:
-            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self._sock.settimeout(2.0)
-            self._sock.bind(("0.0.0.0", self._port))
+            self._sock.bind(("", self._port))
+
+            # Join the multicast group
+            mreq = struct.pack(
+                "4s4s",
+                socket.inet_aton(self._multicast_addr),
+                socket.inet_aton("0.0.0.0"),
+            )
+            self._sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         except OSError as e:
-            logger.warning("Could not bind DCS-BIOS export listener on port %d: %s", self._port, e)
+            logger.warning("Could not bind DCS-BIOS multicast listener (%s:%d): %s",
+                           self._multicast_addr, self._port, e)
             return False
 
         self._running = True
         self._thread = threading.Thread(target=self._listen, daemon=True)
         self._thread.start()
-        logger.info("DCS-BIOS state reader listening on port %d", self._port)
+        logger.info("DCS-BIOS state reader listening on %s:%d", self._multicast_addr, self._port)
         return True
 
     def stop(self) -> None:
