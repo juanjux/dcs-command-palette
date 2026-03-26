@@ -13,6 +13,7 @@ import threading
 import time
 
 from PyQt6.QtCore import QObject, pyqtSignal  # type: ignore[import-untyped]
+from PyQt6.QtGui import QIcon  # type: ignore[import-untyped]
 from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QApplication, QSystemTrayIcon, QMenu, QInputDialog, QFileDialog, QMessageBox,
 )
@@ -330,6 +331,32 @@ def _add_palette_commands(commands: List[Command]) -> List[Command]:
 SHUTDOWN_FILE = os.path.join(PROJECT_DIR, ".shutdown")
 
 
+def _create_tray_icon() -> QIcon:
+    """Create a simple tray icon: a blue/white command palette symbol."""
+    from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont, QPen
+    from PyQt6.QtCore import Qt, QRect
+
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(QColor(0, 0, 0, 0))  # transparent
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # Blue rounded rectangle background
+    painter.setBrush(QColor(60, 120, 220))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawRoundedRect(2, 2, 60, 60, 12, 12)
+
+    # White ">_" prompt symbol
+    painter.setPen(QPen(QColor(255, 255, 255), 4))
+    font = QFont("Consolas", 32, QFont.Weight.Bold)
+    painter.setFont(font)
+    painter.drawText(QRect(0, 0, 64, 64), Qt.AlignmentFlag.AlignCenter, ">_")
+
+    painter.end()
+    return QIcon(pixmap)
+
+
 class App:
     """Main application class managing the palette lifecycle."""
 
@@ -536,9 +563,14 @@ class App:
                 ctypes.windll.user32.RegisterHotKey(None, 1, 0x0002 | 0x4000, VK_SPACE)
 
         # System tray
-        tray = QSystemTrayIcon()
+        tray = QSystemTrayIcon(_create_tray_icon())
         hotkey_display = configured_hotkey
         tray.setToolTip(f"DCS Command Palette ({hotkey_display})")
+        tray.activated.connect(
+            lambda reason: self.palette.show_palette()
+            if reason == QSystemTrayIcon.ActivationReason.DoubleClick
+            else None
+        )
         tray_menu = QMenu()
         show_action = tray_menu.addAction("Show Palette")
         show_action.triggered.connect(self.palette.show_palette)
