@@ -23,6 +23,14 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QVBoxLayout,
 )
 
+from bios_installer import (
+    backup_scripts,
+    download_zip,
+    ensure_export_lua,
+    get_latest_release_url,
+    install_bios,
+    is_bios_installed,
+)
 from config import DCS_SAVED_GAMES, PROJECT_DIR
 from setup import (
     _read_settings,
@@ -226,6 +234,22 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         layout.addWidget(hook_group)
 
+        # --- DCS-BIOS ---
+        bios_group = QGroupBox("DCS-BIOS")
+        bios_layout = QVBoxLayout(bios_group)
+
+        self._bios_install_status = QLabel()
+        bios_layout.addWidget(self._bios_install_status)
+
+        bios_btn_row = QHBoxLayout()
+        self._install_bios_btn = QPushButton("Install / Update DCS-BIOS")
+        self._install_bios_btn.clicked.connect(self._install_or_update_bios)
+        bios_btn_row.addWidget(self._install_bios_btn)
+        bios_btn_row.addStretch()
+        bios_layout.addLayout(bios_btn_row)
+
+        layout.addWidget(bios_group)
+
         # --- Info ---
         info_group = QGroupBox("Info")
         info_layout = QVBoxLayout(info_group)
@@ -268,6 +292,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._dir_edit.setText(self._dcs_dir)
         self._refresh_aircraft_list()
         self._update_hook_status()
+        self._update_bios_status()
 
         settings = _read_settings()
         self._show_ids_checkbox.setChecked(bool(settings.get("show_identifiers", False)))
@@ -378,6 +403,104 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
             QMessageBox.critical(self, "Uninstall Hook", f"Failed to remove hook:\n{e}")
 
         self._update_hook_status()
+
+    def _update_bios_status(self) -> None:
+        if is_bios_installed(DCS_SAVED_GAMES):
+            self._bios_install_status.setText("Status: Installed")
+            self._bios_install_status.setStyleSheet("color: green; font-weight: bold;")
+            self._install_bios_btn.setText("Update DCS-BIOS")
+        else:
+            self._bios_install_status.setText("Status: Not installed")
+            self._bios_install_status.setStyleSheet("color: orange; font-weight: bold;")
+            self._install_bios_btn.setText("Install DCS-BIOS")
+
+    def _install_or_update_bios(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "Install / Update DCS-BIOS",
+            "This will:\n"
+            "1. Download the latest DCS-BIOS release from GitHub\n"
+            "2. Back up your current Scripts/DCS-BIOS folder and Export.lua\n"
+            "3. Extract the new DCS-BIOS into Scripts/\n"
+            "4. Ensure Export.lua loads DCS-BIOS\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Fetch latest release URL
+        self._install_bios_btn.setEnabled(False)
+        self._bios_install_status.setText("Checking latest release...")
+        self._bios_install_status.setStyleSheet("color: gray; font-weight: bold;")
+        from PyQt6.QtWidgets import QApplication  # type: ignore[import-untyped]
+        QApplication.processEvents()
+
+        url, tag = get_latest_release_url()
+        if not url:
+            self._install_bios_btn.setEnabled(True)
+            self._update_bios_status()
+            QMessageBox.critical(
+                self, "DCS-BIOS Install",
+                "Could not find a DCS-BIOS download URL.\n"
+                "Check your internet connection and try again.",
+            )
+            return
+
+        # Download
+        self._bios_install_status.setText(f"Downloading {tag}...")
+        QApplication.processEvents()
+
+        zip_data = download_zip(url)
+        if not zip_data:
+            self._install_bios_btn.setEnabled(True)
+            self._update_bios_status()
+            QMessageBox.critical(
+                self, "DCS-BIOS Install",
+                "Failed to download DCS-BIOS.\n"
+                "Check your internet connection and try again.",
+            )
+            return
+
+        # Backup
+        self._bios_install_status.setText("Backing up current installation...")
+        QApplication.processEvents()
+
+        backup_dir = backup_scripts(DCS_SAVED_GAMES)
+
+        # Install
+        self._bios_install_status.setText("Installing...")
+        QApplication.processEvents()
+
+        if not install_bios(DCS_SAVED_GAMES, zip_data):
+            self._install_bios_btn.setEnabled(True)
+            self._update_bios_status()
+            QMessageBox.critical(
+                self, "DCS-BIOS Install",
+                "Failed to extract DCS-BIOS zip.\n"
+                "Check the log file for details.",
+            )
+            return
+
+        # Ensure Export.lua
+        lua_ok = ensure_export_lua(DCS_SAVED_GAMES)
+
+        self._install_bios_btn.setEnabled(True)
+        self._update_bios_status()
+
+        backup_msg = f"Backup saved to:\n{backup_dir}\n\n" if backup_dir else ""
+        lua_msg = "" if lua_ok else "\nWarning: Could not update Export.lua. Check manually."
+
+        QMessageBox.information(
+            self,
+            "DCS-BIOS Install",
+            f"DCS-BIOS {tag} installed successfully!\n\n"
+            f"{backup_msg}"
+            f"DCS-BIOS files are in:\n"
+            f"{os.path.join(DCS_SAVED_GAMES, 'Scripts', 'DCS-BIOS')}"
+            f"{lua_msg}",
+        )
 
     def _capture_hotkey(self) -> None:
         """Open a dialog that waits for a key/button press to assign as hotkey."""
