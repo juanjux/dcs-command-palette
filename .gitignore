@@ -21,3 +21,6 @@ settings.json
 
 # PyInstaller
 *.spec
+
+# Inno Setup
+*.iss

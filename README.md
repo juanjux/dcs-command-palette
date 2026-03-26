@@ -77,6 +77,68 @@ Run the .exe or .py (if using the source distribution) with the `--debug` parame
 issue on https://github.com/juanjux/dcs-command-palette/issues attaching the dcs_command_palette.log on your `C:\Users\YOURUSER\Saved Games\DCS\dcs-command-palette` directory.
 
 
+## Development
+
+### Setup
+
+```bash
+git clone https://github.com/juanjux/dcs-command-palette
+cd dcs-command-palette
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+```
+
+### Running tests
+
+```bash
+.venv\Scripts\python -m pytest tests/ -v     # all tests
+.venv\Scripts\python -m mypy *.py             # type checking
+```
+
+### Running with debug logging
+
+```bash
+.venv\Scripts\python main.py --debug --aircraft FA-18C_hornet
+```
+
+### Building the Windows installer
+
+Requires [Inno Setup 6](https://jrsoftware.org/isdl.php) and PyInstaller:
+
+```bash
+.venv\Scripts\pip install pyinstaller
+.venv\Scripts\python build_installer.py
+```
+
+This will:
+1. Run PyInstaller to create `dist/dcs-command-palette/` (the standalone .exe + deps)
+2. Generate an Inno Setup script and compile it into a single installer
+
+Output: `dist/DCS-Command-Palette-v{version}-Setup.exe`
+
+The installer includes:
+- All application files
+- Start Menu and optional Desktop shortcuts
+- Optional Lua hook installation (auto-detects DCS Saved Games)
+- Clean uninstaller (removes hook too)
+
+To build just the .exe without the installer (no Inno Setup needed):
+
+```bash
+.venv\Scripts\python build_exe.py
+```
+
+### Creating a GitHub release
+
+```bash
+# Build the installer
+.venv\Scripts\python build_installer.py
+
+# Create the release
+gh release create v0.1.0 "dist/DCS-Command-Palette-v0.1.0-Setup.exe" \
+    --title "v0.1.0" --notes "Initial release"
+```
+
 ## Supported Aircraft
 
 Any aircraft with DCS-BIOS support. The palette auto-detects installed modules from the DCS installation directory. Keyboard shortcut parsing works for all standard DCS aircraft.
