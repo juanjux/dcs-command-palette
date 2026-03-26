@@ -22,6 +22,10 @@ class Control:
     suggested_step: Optional[int] = None
     position_labels: Optional[Dict[int, str]] = None
     search_text: str = ""
+    # DCS-BIOS output metadata for reading current state
+    output_address: Optional[int] = None
+    output_mask: Optional[int] = None
+    output_shift: Optional[int] = None
 
 
 # Pattern: "0 = off, 1 = on" or "0 = emergency, 1 = park, 2 = release"
@@ -72,6 +76,17 @@ def load_controls(json_path: str) -> list[Control]:
 
             position_labels = _parse_position_labels(inputs)
 
+            # Parse first integer output for state reading
+            output_address: Optional[int] = None
+            output_mask: Optional[int] = None
+            output_shift: Optional[int] = None
+            for out in ctrl.get("outputs", []):
+                if out.get("type") == "integer":
+                    output_address = out.get("address")
+                    output_mask = out.get("mask")
+                    output_shift = out.get("shift_by")
+                    break
+
             # Build searchable text: identifier (with underscores as spaces) + description + category
             id_spaced = ctrl_id.replace("_", " ")
             search_text = f"{id_spaced} {ctrl.get('description', '')} {category_name}".lower()
@@ -90,6 +105,9 @@ def load_controls(json_path: str) -> list[Control]:
                 suggested_step=suggested_step,
                 position_labels=position_labels,
                 search_text=search_text,
+                output_address=output_address,
+                output_mask=output_mask,
+                output_shift=output_shift,
             ))
 
     return controls

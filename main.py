@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QApplication, QSystemTrayIcon, QMenu, QInputDialog, QFileDialog, QMessageBox,
 )
 
+from bios_state import BiosStateReader
 from commands import Command, CommandSource, load_all_commands
 import config as cfg
 from config import DCS_BIOS_HOST, DCS_BIOS_PORT, DCS_SAVED_GAMES, PALETTE_LISTEN_PORT, PROJECT_DIR
@@ -310,6 +311,8 @@ class App:
         self._load_display_settings()
         self.usage = UsageTracker()
         self.sender = DCSBiosSender()
+        self.state_reader = BiosStateReader()
+        self.state_reader.start()
         self.palette: Optional[CommandPalette] = None
         self._load_commands()
 
@@ -355,7 +358,7 @@ class App:
         if self.palette:
             self.palette._commands = commands
         else:
-            self.palette = CommandPalette(commands, self.usage, self.sender)
+            self.palette = CommandPalette(commands, self.usage, self.sender, self.state_reader)
 
         # Hook palette commands
         self.palette.palette_command_triggered = self._on_palette_command  # type: ignore[attr-defined]
@@ -496,6 +499,7 @@ class App:
         udp_listener.stop()
         self._cleanup_shutdown_file()
         self.usage.save()
+        self.state_reader.stop()
         self.sender.close()
         sys.exit(ret)
 

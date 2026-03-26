@@ -36,6 +36,11 @@ class Command:
     suggested_step: Optional[int] = None
     position_labels: Optional[Dict[int, str]] = None
 
+    # DCS-BIOS output (for reading current state)
+    output_address: Optional[int] = None
+    output_mask: Optional[int] = None
+    output_shift: Optional[int] = None
+
     # Keyboard shortcut specific
     key_combo: str = ""
 
@@ -64,6 +69,9 @@ def _control_to_command(ctrl: Control) -> Command:
         has_set_string=ctrl.has_set_string,
         suggested_step=ctrl.suggested_step,
         position_labels=ctrl.position_labels,
+        output_address=ctrl.output_address,
+        output_mask=ctrl.output_mask,
+        output_shift=ctrl.output_shift,
     )
 
 
@@ -94,7 +102,8 @@ def _enrich_position_labels(
     Excludes directional entries like "CCW", "CW", "Up", "Down", "Pull", "Stow".
     """
     # Build a map of description -> list of position names from keyboard entries
-    directional = {"ccw", "cw", "up", "down", "pull", "stow", "pull/stow"}
+    directional = {"ccw", "cw", "up", "down", "pull", "stow", "pull/stow", "cycle",
+                    "toggle", "press", "release", "held left/down", "centered", "held right/up"}
     desc_positions: Dict[str, List[str]] = {}
     for entry in kb_entries:
         if " - " not in entry.name:

@@ -38,6 +38,7 @@ from config import (
     TEXT_COLOR,
     TEXT_MUTED_COLOR,
 )
+from bios_state import BiosStateReader
 from dcs_bios import DCSBiosSender
 from key_sender import send_key_combo
 from search import search
@@ -334,10 +335,12 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         commands: List[Command],
         usage: UsageTracker,
         sender: DCSBiosSender,
+        state_reader: Optional[BiosStateReader] = None,
     ) -> None:
         super().__init__()
         self._commands = commands
         self._usage = usage
+        self._state_reader = state_reader
         self._sender = sender
         self._results: List[Command] = []
         self._selected_index: int = 0
@@ -608,12 +611,31 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             self._sender.inc(cmd.identifier)
         self.hide_palette()
 
+    def _get_current_state_text(self, cmd: Command) -> str:
+        """Get a human-readable current state string for a BIOS command."""
+        if (self._state_reader is None
+                or cmd.output_address is None
+                or cmd.output_mask is None
+                or cmd.output_shift is None):
+            return ""
+        value = self._state_reader.get_value(cmd.output_address, cmd.output_mask, cmd.output_shift)
+        if cmd.position_labels and value in cmd.position_labels:
+            return f"Current: {cmd.position_labels[value]} ({value})"
+        return f"Current: {value}"
+
     def _show_submenu(self, cmd: Command) -> None:
         self._in_submenu = True
         self._scroll.hide()
         self._search.setReadOnly(True)
-        self._search.setText(f"{cmd.identifier} - {cmd.description}")
+        state_text = self._get_current_state_text(cmd)
+        title = f"{cmd.identifier} - {cmd.description}"
+        if state_text:
+            title += f"  [{state_text}]"
+        self._search.setText(title)
         self._submenu.set_command(cmd, self._sender)
+        # Install event filter on all submenu buttons so Tab is intercepted
+        for btn in self._submenu._buttons:
+            btn.installEventFilter(self)
         self._submenu.show()
         self.adjustSize()
 
@@ -637,18 +659,26 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self.adjustSize()
 
     def eventFilter(self, obj: object, event: object) -> bool:
-        """Intercept Tab/Shift+Tab in the search box before Qt's focus chain."""
-        if obj is self._search and isinstance(event, QKeyEvent):
-            if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Tab:
+        """Intercept Tab/Shift+Tab before Qt's default focus chain."""
+        if isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Tab:
                 self._restart_inactivity_timer()
-                if self._results:
+
+                if self._in_submenu:
+                    # Cycle through submenu buttons
+                    reverse = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+                    self._submenu_navigate(reverse=reverse)
+                    return True
+
+                if obj is self._search and self._results:
+                    # Move through results list
                     if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                         self._selected_index = max(self._selected_index - 1, 0)
                     else:
                         self._selected_index = min(self._selected_index + 1, len(self._results) - 1)
                     self._update_results_display()
                     self._ensure_visible()
-                return True  # consume the event
+                return True  # always consume Tab
         return super().eventFilter(obj, event)  # type: ignore[arg-type]
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]

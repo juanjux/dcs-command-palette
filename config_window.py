@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import subprocess
 from typing import Optional
 
 from PyQt6.QtCore import Qt  # type: ignore[import-untyped]
@@ -32,6 +33,33 @@ from setup import (
 )
 
 logger = logging.getLogger(__name__)
+
+def _get_version_string() -> str:
+    """Get version and git commit for display."""
+    version = "unknown"
+    try:
+        toml_path = os.path.join(PROJECT_DIR, "pyproject.toml")
+        with open(toml_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("version"):
+                    version = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    except (OSError, IndexError):
+        pass
+
+    commit = "unknown"
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5, cwd=PROJECT_DIR,
+        )
+        if result.returncode == 0:
+            commit = result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    return f"v{version} ({commit})"
+
 
 HOOK_FILENAME = "dcs_command_palette_hook.lua"
 HOOK_SOURCE = os.path.join(PROJECT_DIR, HOOK_FILENAME)
@@ -151,8 +179,12 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         layout.addWidget(hook_group)
 
         # --- Info ---
-        info_group = QGroupBox("Paths")
+        info_group = QGroupBox("Info")
         info_layout = QVBoxLayout(info_group)
+
+        version_label = QLabel(f"Version: {_get_version_string()}")
+        version_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        info_layout.addWidget(version_label)
 
         self._saved_games_label = QLabel(f"DCS Saved Games: {DCS_SAVED_GAMES}")
         self._saved_games_label.setStyleSheet("font-size: 11px;")
