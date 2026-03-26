@@ -54,12 +54,17 @@ class Command:
 
 
 def _control_to_command(ctrl: Control) -> Command:
+    search_text = ctrl.search_text
+    # Append position label values so users can search by label (e.g. "arm", "safe")
+    if ctrl.position_labels:
+        labels = " ".join(ctrl.position_labels.values()).lower()
+        search_text = f"{search_text} {labels}"
     return Command(
         identifier=ctrl.identifier,
         description=ctrl.description,
         category=ctrl.category,
         source=CommandSource.DCS_BIOS,
-        search_text=ctrl.search_text,
+        search_text=search_text,
         control_type=ctrl.control_type,
         inputs=ctrl.inputs,
         max_value=ctrl.max_value,

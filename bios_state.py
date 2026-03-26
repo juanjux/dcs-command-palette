@@ -15,6 +15,7 @@ import logging
 import socket
 import struct
 import threading
+import time
 from typing import Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -39,10 +40,16 @@ class BiosStateReader:
         self._port = port
         self._frame = bytearray(FRAME_SIZE)
         self._lock = threading.Lock()
+        self._last_frame_time: float = 0.0
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._sock: Optional[socket.socket] = None
         self._on_frame_update: Optional[Callable[[], None]] = None
+
+    @property
+    def connected(self) -> bool:
+        """Return True if we've received at least one frame in the last 5 seconds."""
+        return time.time() - self._last_frame_time < 5.0
 
     def start(self, on_frame_update: Optional[Callable[[], None]] = None) -> bool:
         """Start listening for DCS-BIOS export data.
@@ -121,6 +128,7 @@ class BiosStateReader:
 
             if addr == SYNC_ADDR and count == SYNC_ADDR:
                 frame_complete = True
+                self._last_frame_time = time.time()
                 continue
 
             if offset + count > len(data):

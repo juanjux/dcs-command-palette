@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 from typing import Any, Dict, List, Tuple
 
 from rapidfuzz import fuzz, process
 
-from commands import Command
+from commands import Command, CommandSource
 from config import (
     MAX_RESULTS,
     PREFIX_MATCH_BONUS,
@@ -79,6 +80,25 @@ def search(
         if len(query_words) > 1:
             if all(w in cmd.search_text for w in query_words):
                 final += 15
+
+        # Literal substring match bonus: "Night" matches "Night/Day" exactly
+        if query_lower in cmd.search_text:
+            final += 12
+
+        # Deprioritize pushbuttons (e.g. AMPCD_PB_01, LEFT_DDI_PB_01)
+        if "_PB" in cmd.identifier:
+            final -= 10
+
+        # Deprioritize unbound keyboard commands
+        if (
+            getattr(cmd, "source", None) == CommandSource.KEYBOARD
+            and not getattr(cmd, "key_combo", "")
+        ):
+            final -= 8
+
+        # Deprioritize UFC numeric keyboard (UFC_0 .. UFC_9)
+        if re.match(r"^UFC_[0-9]$", cmd.identifier):
+            final -= 5
 
         scored_results.append((final, cmd))
 

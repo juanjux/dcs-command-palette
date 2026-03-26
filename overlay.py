@@ -46,6 +46,8 @@ from usage_tracker import UsageTracker
 
 
 class ResultItem(QWidget):  # type: ignore[misc]
+    _state_reader: Optional[BiosStateReader] = None
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.command: Optional[Command] = None
@@ -102,8 +104,12 @@ class ResultItem(QWidget):  # type: ignore[misc]
         # Keyboard commands with no binding are dimmed
         unbound = (cmd.source == CommandSource.KEYBOARD and not cmd.key_combo
                    and not cmd.identifier.startswith("__"))
-        dim = "#555555" if unbound else IDENTIFIER_COLOR
-        dim_desc = "#444444" if unbound else TEXT_MUTED_COLOR
+        # DCS-BIOS commands are dimmed when not connected
+        bios_offline = (cmd.source == CommandSource.DCS_BIOS
+                        and ResultItem._state_reader is not None
+                        and not ResultItem._state_reader.connected)
+        dim = "#555555" if (unbound or bios_offline) else IDENTIFIER_COLOR
+        dim_desc = "#444444" if (unbound or bios_offline) else TEXT_MUTED_COLOR
 
         self.id_label.setText(cmd.description)
         self.id_label.setStyleSheet(
@@ -119,7 +125,12 @@ class ResultItem(QWidget):  # type: ignore[misc]
             self.desc_label.hide()
         cat = cmd.category if len(cmd.category) <= 30 else cmd.category[:27] + "..."
         self.cat_label.setText(cat)
-        if unbound:
+        if bios_offline:
+            self.combo_label.setText("BIOS offline")
+            self.combo_label.setStyleSheet(
+                f"color: #664444; font-size: 10px; font-style: italic;"
+            )
+        elif unbound:
             self.combo_label.setText("no key")
             self.combo_label.setStyleSheet(
                 f"color: #664444; font-size: 10px; font-style: italic;"
@@ -147,14 +158,19 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         super().__init__(parent)
         self.command: Optional[Command] = None
         self._sender: Optional[DCSBiosSender] = None
+        self._state_reader: Optional[BiosStateReader] = None
+        self._slider: Optional[QSlider] = None
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(12, 8, 12, 8)
         self._layout.setSpacing(6)
 
     def set_command(self, cmd: Command, sender: DCSBiosSender,
-                    current_value: Optional[int] = None) -> None:
+                    current_value: Optional[int] = None,
+                    state_reader: Optional[BiosStateReader] = None) -> None:
         self.command = cmd
         self._sender = sender
+        self._state_reader = state_reader
+        self._slider = None
         self._current_value = current_value
         self._buttons: List[QPushButton] = []
         self._clear()
@@ -274,19 +290,23 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
 
         if cmd.has_variable_step and cmd.suggested_step:
             step = cmd.suggested_step
-            dec_btn.clicked.connect(
-                lambda: self.action_requested.emit(cmd.identifier, f"-{step}")
-            )
-            inc_btn.clicked.connect(
-                lambda: self.action_requested.emit(cmd.identifier, f"+{step}")
-            )
+            dec_btn.clicked.connect(lambda: (
+                self.action_requested.emit(cmd.identifier, f"-{step}"),
+                QTimer.singleShot(200, self._refresh_slider_from_bios),
+            ))
+            inc_btn.clicked.connect(lambda: (
+                self.action_requested.emit(cmd.identifier, f"+{step}"),
+                QTimer.singleShot(200, self._refresh_slider_from_bios),
+            ))
         else:
-            dec_btn.clicked.connect(
-                lambda: self.action_requested.emit(cmd.identifier, "DEC")
-            )
-            inc_btn.clicked.connect(
-                lambda: self.action_requested.emit(cmd.identifier, "INC")
-            )
+            dec_btn.clicked.connect(lambda: (
+                self.action_requested.emit(cmd.identifier, "DEC"),
+                QTimer.singleShot(200, self._refresh_slider_from_bios),
+            ))
+            inc_btn.clicked.connect(lambda: (
+                self.action_requested.emit(cmd.identifier, "INC"),
+                QTimer.singleShot(200, self._refresh_slider_from_bios),
+            ))
 
         self._buttons.append(dec_btn)
         self._buttons.append(inc_btn)
@@ -294,9 +314,20 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         row.addWidget(inc_btn)
         self._layout.addLayout(row)
 
+    def _refresh_slider_from_bios(self) -> None:
+        """Re-read BIOS value after INC/DEC and update the slider."""
+        if self._slider and self.command and self._state_reader:
+            cmd = self.command
+            if cmd.output_address is not None and cmd.output_mask is not None and cmd.output_shift is not None:
+                val = self._state_reader.get_value(cmd.output_address, cmd.output_mask, cmd.output_shift)
+                if val is not None:
+                    self._slider.blockSignals(True)
+                    self._slider.setValue(val)
+                    self._slider.blockSignals(False)
+
     def _add_slider(self, cmd: Command) -> None:
         slider_row = QHBoxLayout()
-        slider = QSlider(Qt.Orientation.Horizontal)
+        slider = self._slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, cmd.max_value or 65535)
         slider.setStyleSheet(
             "QSlider::groove:horizontal { background: rgba(50,50,70,200); height: 8px; border-radius: 4px; }"
@@ -366,6 +397,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._commands = commands
         self._usage = usage
         self._state_reader = state_reader
+        ResultItem._state_reader = state_reader
         self._sender = sender
         self._results: List[Command] = []
         self._selected_index: int = 0
@@ -584,6 +616,22 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         cmd = self._results[self._selected_index]
         self._usage.record_use(cmd.identifier)
 
+        # DCS-BIOS command while not connected
+        if (cmd.source == CommandSource.DCS_BIOS
+                and self._state_reader is not None
+                and not self._state_reader.connected):
+            self._search.setStyleSheet(
+                f"QLineEdit {{ color: #ff6666; "
+                f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
+                f"border: none; border-bottom: 1px solid #ff4444; "
+                f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
+                f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+            )
+            self._search.setText("DCS-BIOS not connected - open Settings to install")
+            self._search.setReadOnly(True)
+            QTimer.singleShot(1500, self._reset_search_style)
+            return
+
         # Built-in palette commands
         if cmd.identifier.startswith("__") and cmd.identifier.endswith("__"):
             self.hide_palette()
@@ -639,6 +687,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
     def _get_current_bios_value(self, cmd: Command) -> Optional[int]:
         """Get the current integer value of a BIOS command from the live state."""
         if (self._state_reader is None
+                or not self._state_reader.connected
                 or cmd.output_address is None
                 or cmd.output_mask is None
                 or cmd.output_shift is None):
@@ -646,12 +695,28 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         return self._state_reader.get_value(cmd.output_address, cmd.output_mask, cmd.output_shift)
 
     def _show_submenu(self, cmd: Command) -> None:
+        # Block submenu if DCS-BIOS is not connected
+        if (cmd.source == CommandSource.DCS_BIOS
+                and self._state_reader is not None
+                and not self._state_reader.connected):
+            self._search.setStyleSheet(
+                f"QLineEdit {{ color: #ff6666; "
+                f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
+                f"border: none; border-bottom: 1px solid #ff4444; "
+                f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
+                f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+            )
+            self._search.setText("DCS-BIOS not connected - open Settings to install")
+            self._search.setReadOnly(True)
+            QTimer.singleShot(1500, self._reset_search_style)
+            return
         self._in_submenu = True
         self._scroll.hide()
         self._search.setReadOnly(True)
         self._search.setText(f"{cmd.description}")
         current_value = self._get_current_bios_value(cmd)
-        self._submenu.set_command(cmd, self._sender, current_value=current_value)
+        self._submenu.set_command(cmd, self._sender, current_value=current_value,
+                                  state_reader=self._state_reader)
         # Install event filter on all submenu buttons so Tab is intercepted
         for btn in self._submenu._buttons:
             btn.installEventFilter(self)
@@ -681,25 +746,26 @@ class CommandPalette(QWidget):  # type: ignore[misc]
     def eventFilter(self, obj: object, event: object) -> bool:
         """Intercept Tab/Shift+Tab before Qt's default focus chain."""
         if isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Tab:
+            if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                reverse = (event.key() == Qt.Key.Key_Backtab
+                           or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
                 self._restart_inactivity_timer()
 
                 if self._in_submenu:
                     # Cycle through submenu buttons
-                    reverse = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
                     self._submenu_navigate(reverse=reverse)
                     return True
 
                 if obj is self._search and self._results:
                     # Move through results list (wrapping)
                     n = len(self._results)
-                    if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    if reverse:
                         self._selected_index = (self._selected_index - 1) % n
                     else:
                         self._selected_index = (self._selected_index + 1) % n
                     self._update_results_display()
                     self._ensure_visible()
-                return True  # always consume Tab
+                return True  # always consume Tab/Backtab
         return super().eventFilter(obj, event)  # type: ignore[arg-type]
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
@@ -722,8 +788,9 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                     focused.click()
                     return
             # Tab/Shift+Tab cycles through submenu buttons
-            if key == Qt.Key.Key_Tab:
-                self._submenu_navigate(reverse=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                self._submenu_navigate(reverse=(key == Qt.Key.Key_Backtab
+                                                or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)))
                 return
             super().keyPressEvent(event)
             return
@@ -743,9 +810,11 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return
 
         # Tab/Shift+Tab also navigate results (like Down/Up)
-        if key == Qt.Key.Key_Tab:
+        if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             if self._results:
-                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                reverse = (key == Qt.Key.Key_Backtab
+                           or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+                if reverse:
                     self._selected_index = max(self._selected_index - 1, 0)
                 else:
                     self._selected_index = min(self._selected_index + 1, len(self._results) - 1)
