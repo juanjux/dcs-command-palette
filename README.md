@@ -2,6 +2,12 @@
 
 A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by default, configurable to any keyboard combo or HOTAS button) and a searchable overlay appears over DCS. Type to fuzzy-search all cockpit controls and keyboard shortcuts, then execute them instantly.
 
+## Screenshots
+
+![](screenshots/screenshot1.png)
+![](screenshots/screenshot2.png)
+![](screenshots/screenshot3.png)
+
 ## Features
 
 - **Fuzzy search** across all DCS-BIOS controls and keyboard shortcuts (powered by RapidFuzz)
