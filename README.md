@@ -17,37 +17,47 @@ A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by def
 
 ## Installation
 
-### From Release (.exe)
+### From Installer (recommended)
 
-1. Download the latest release
-2. Extract anywhere (e.g., your Desktop or a tools folder)
-3. Run `dcs-command-palette.exe` — a setup wizard will guide you on first launch:
-   - Auto-detects your DCS installation
-   - Installs the Lua hook (auto-start/stop with DCS missions)
-   - Offers to install DCS-BIOS for cockpit control integration
-4. You can re-run setup anytime from the Settings window
+1. Download `DCS-Command-Palette-vX.Y.Z-Setup.exe` from the [latest release](https://github.com/juanjux/dcs-command-palette/releases)
+2. Run the installer — it will:
+   - Install the application to `C:\Program Files\DCS Command Palette` (or your chosen location)
+   - Create Start Menu and optional Desktop shortcuts
+   - Install the Lua hook to your DCS Saved Games folder (auto-start/stop with missions)
+   - Offer to install DCS-BIOS if not already present
+3. On first launch, a setup wizard guides you through any remaining configuration
+4. After that, the palette starts automatically when you begin a DCS mission
 
-### From Source (for devs)
+### Manual / Portable
+
+1. Download the latest release ZIP
+2. Extract anywhere
+3. Run `dcs-command-palette.exe` — the first-run wizard will handle hook installation and DCS-BIOS setup
+
+### From Source (for development)
 
 ```bash
 cd "Saved Games\DCS"
 git clone https://github.com/juanjux/dcs-command-palette
 cd dcs-command-palette
 python -m venv .venv
-.venv\Scripts\pip install -e .
-.venv\Scripts\python main.py
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\python main.py --aircraft FA-18C_hornet
 ```
 
-The Lua hook (`dcs_command_palette_hook.lua`) will automatically find either the `.exe` or the `.venv\Scripts\pythonw.exe` + `main.py` setup.
+The Lua hook (`src/lua/dcs_command_palette_hook.lua`) will automatically find either the `.exe` or the `.venv\Scripts\pythonw.exe` + `main.py` setup.
 
 ## Usage
 
-- Once installed, DCS-Palette should start with the simulation and automatically stop when exiting it.
-- **Ctrl+Space** (default): Toggle the command palette
-- Type to search, **Up/Down/Tab** to navigate, **Enter** to execute
+Once installed, the palette starts automatically with each DCS mission and stops when you exit.
+
+- **Ctrl+Space** (default, configurable): Toggle the command palette overlay
+- Type to search, **Up/Down** or **Tab/Shift+Tab** to navigate results, **Enter** to execute
 - **Escape**: Close palette or go back from a sub-menu
-- Multi-position switches show a sub-menu with the current state highlighted
-- Dials show INC/DEC buttons and a slider
+- Multi-position switches (FLAP, RADAR, ECM, etc.) show a sub-menu with named positions and the **current cockpit state highlighted**
+- Dials and knobs show INC/DEC buttons and a slider initialized to the current value
+- Unbound keyboard shortcuts are hidden by default (enable in Settings)
+- The palette auto-hides after 5 seconds of inactivity (configurable), resets on any interaction
 
 ### Built-in Palette Commands
 
@@ -60,15 +70,17 @@ The palette includes several built-in commands (search for them by name):
 
 ## Configuration
 
-Open Settings from the palette (search "settings") or from the system tray icon.
+Open Settings from the palette (search "settings") or from the system tray icon (right-click).
 
 - **Aircraft**: Auto-detected from DCS on mission start, or manually selected
-- **Hotkey**: Keyboard combo (default `Ctrl+Space`) or HOTAS button (e.g. `Joy0_Button3`)
-- **Auto-hide**: Configurable timeout in seconds (0 to disable)
-- **Show identifiers**: Toggle DCS-BIOS control IDs below command names
+- **Hotkey**: Keyboard combo (default `Ctrl+Space`) or HOTAS button (e.g. `Joy0_Button3`). Click "Set Shortcut" to capture a new binding
+- **Overlay position**: Top, center, or bottom of the screen (useful if TrackIR clips interfere)
+- **Auto-hide**: Palette disappears after N seconds of inactivity (default 5, 0 to disable). Resets on interaction
+- **Show identifiers**: Toggle DCS-BIOS control IDs (e.g. `FLAP_SW`) below command names
+- **Show unbound shortcuts**: Show keyboard shortcuts that have no keybinding assigned (hidden by default)
 - **DCS install directory**: Auto-detected or manually selected on first run
-- **Lua Hook**: Install/uninstall the DCS hook from Settings
-- **DCS-BIOS**: Install or update DCS-BIOS from Settings
+- **DCS-BIOS**: Connection status, IP/port configuration, install or update from Settings
+- **Lua Hook**: Install/update/uninstall the DCS hook from Settings
 
 
 ## Reporting bugs
@@ -92,7 +104,7 @@ python -m venv .venv
 
 ```bash
 .venv\Scripts\python -m pytest tests/ -v     # all tests
-.venv\Scripts\python -m mypy *.py             # type checking
+.venv\Scripts\python -m mypy src/             # type checking
 ```
 
 ### Running with debug logging
