@@ -181,17 +181,14 @@ def _enrich_position_labels(
             continue
 
         # Use value_down to determine correct position order.
-        # Two DCS conventions:
-        # 1. Rotary selectors: values 0.0, 0.1, 0.2... -> ascending = BIOS position order
-        #    E.g., ECM: OFF=0.0, STBY=0.1, BIT=0.2, REC=0.3, XMIT=0.4
-        # 2. Toggle switches: values -1.0, 0.0, 1.0 -> descending = BIOS position order
-        #    E.g., FLAP: AUTO=1.0, HALF=0.0, FULL=-1.0 -> BIOS 0=AUTO, 1=HALF, 2=FULL
-        # Detection: if any value is negative, it's a toggle switch (sort descending)
+        # DCS-BIOS position 0 = lowest physical switch position.
+        # value_down maps to physical position, so ascending sort always works:
+        #   ECM: OFF=0.0, STBY=0.1, BIT=0.2, REC=0.3, XMIT=0.4
+        #   FLAP: FULL=-1.0, HALF=0.0, AUTO=1.0 -> BIOS 0=FULL, 1=HALF, 2=AUTO
         all_have_values = all(p.value_down is not None for p in pos_infos)
         if all_have_values:
-            has_negative = any((p.value_down or 0.0) < 0 for p in pos_infos)
             sorted_pos = sorted(
-                pos_infos, key=lambda p: p.value_down or 0.0, reverse=has_negative,
+                pos_infos, key=lambda p: p.value_down or 0.0,
             )
             cmd.position_labels = {i: p.name for i, p in enumerate(sorted_pos)}
         else:

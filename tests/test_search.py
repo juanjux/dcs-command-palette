@@ -146,10 +146,10 @@ def test_position_labels_order_rotary() -> None:
 
 
 def test_position_labels_order_toggle() -> None:
-    """Toggle switches with negative value_down use descending order.
+    """Toggle switches use ascending value_down order.
 
-    FLAP Switch: AUTO(1.0) → HALF(0.0) → FULL(-1.0)
-    DCS-BIOS position 0=AUTO, 1=HALF, 2=FULL.
+    FLAP Switch: FULL(-1.0) → HALF(0.0) → AUTO(1.0)
+    DCS-BIOS position 0=FULL (bottom), 1=HALF (middle), 2=AUTO (top).
     """
     commands = load_all_commands(
         dcs_install_dir=r"D:\SteamLibrary\steamapps\common\DCSWorld",
@@ -158,9 +158,9 @@ def test_position_labels_order_toggle() -> None:
     )
     flap = [c for c in commands if c.identifier == "FLAP_SW"][0]
     assert flap.position_labels is not None
-    assert flap.position_labels[0] == "AUTO"
+    assert flap.position_labels[0] == "FULL"
     assert flap.position_labels[1] == "HALF"
-    assert flap.position_labels[2] == "FULL"
+    assert flap.position_labels[2] == "AUTO"
 
 
 def test_bios_category_uses_panel_name() -> None:
