@@ -4,9 +4,9 @@ A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by def
 
 ## Screenshots
 
-![](screenshots/screenshot1.png)
-![](screenshots/screenshot2.png)
-![](screenshots/screenshot3.png)
+![](screenshots/screenshot1.jpg)
+![](screenshots/screenshot2.jpg)
+![](screenshots/screenshot3.jpg)
 
 ## Features
 
