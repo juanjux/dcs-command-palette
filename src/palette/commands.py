@@ -124,6 +124,10 @@ def _enrich_position_labels(
         base, pos_name = entry.name.rsplit(" - ", 1)
         if pos_name.lower() in directional:
             continue
+        # Filter out toggle-style entries like "BARO/RDR", "ON/OFF", "ENABLE/NORM"
+        # which contain "/" and represent cycling between states, not a specific position
+        if "/" in pos_name and pos_name.lower() not in {"ccw/left", "cw/right"}:
+            continue
         desc_positions.setdefault(base, []).append(
             _PositionInfo(name=pos_name, value_down=entry.value_down)
         )
@@ -138,7 +142,7 @@ def _enrich_position_labels(
             continue
         if cmd.position_labels:
             continue  # already has labels from DCS-BIOS JSON
-        if cmd.max_value is None or cmd.max_value < 2:
+        if cmd.max_value is None or cmd.max_value < 1:
             continue
 
         # Generate candidate names to try matching against keyboard base names:
