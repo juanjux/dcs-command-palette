@@ -175,11 +175,12 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         self._buttons: List[QPushButton] = []
         self._clear()
 
-        header = QLabel(f"  {cmd.identifier} - {cmd.description}")
-        header.setStyleSheet(
-            f"color: {ACCENT_COLOR}; font-size: 14px; font-weight: bold;"
-        )
-        self._layout.addWidget(header)
+        if cfg.SHOW_IDENTIFIERS:
+            header = QLabel(f"  {cmd.identifier}")
+            header.setStyleSheet(
+                f"color: {ACCENT_COLOR}; font-size: 12px;"
+            )
+            self._layout.addWidget(header)
 
         if cmd.has_set_string:
             self._add_string_input(cmd)
