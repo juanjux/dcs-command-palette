@@ -126,7 +126,7 @@ class ResultItem(QWidget):  # type: ignore[misc]
         cat = cmd.category if len(cmd.category) <= 30 else cmd.category[:27] + "..."
         self.cat_label.setText(cat)
         if bios_offline:
-            self.combo_label.setText("BIOS offline")
+            self.combo_label.setText("DCS-BIOS offline")
             self.combo_label.setStyleSheet(
                 f"color: #cc3333; font-size: 10px; font-style: italic;"
             )

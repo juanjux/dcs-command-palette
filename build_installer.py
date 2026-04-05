@@ -118,21 +118,21 @@ var
   Path: String;
 begin
   // Default to Saved Games\DCS\dcs-command-palette
-  Path := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS');
+  Path := ExpandConstant('{{%USERPROFILE}}\\Saved Games\\DCS');
   if DirExists(Path) then
   begin
     Result := Path + '\\dcs-command-palette';
     Exit;
   end;
   // Try OpenBeta
-  Path := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS.openbeta');
+  Path := ExpandConstant('{{%USERPROFILE}}\\Saved Games\\DCS.openbeta');
   if DirExists(Path) then
   begin
     Result := Path + '\\dcs-command-palette';
     Exit;
   end;
   // Fallback
-  Result := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS\\dcs-command-palette');
+  Result := ExpandConstant('{{%USERPROFILE}}\\Saved Games\\DCS\\dcs-command-palette');
 end;
 
 function GetDCSSavedGamesPath(): String;
@@ -140,7 +140,7 @@ var
   Path: String;
 begin
   // Try standard DCS path
-  Path := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS');
+  Path := ExpandConstant('{{%USERPROFILE}}\\Saved Games\\DCS');
   if DirExists(Path) then
   begin
     Result := Path;
@@ -148,7 +148,7 @@ begin
   end;
 
   // Try OpenBeta
-  Path := ExpandConstant('{{userappdata}}\\..\\Saved Games\\DCS.openbeta');
+  Path := ExpandConstant('{{%USERPROFILE}}\\Saved Games\\DCS.openbeta');
   if DirExists(Path) then
   begin
     Result := Path;
