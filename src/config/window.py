@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer  # type: ignore[import-untyped]
@@ -57,15 +58,16 @@ def _get_version_string() -> str:
         pass
 
     commit = "unknown"
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5, cwd=PROJECT_DIR,
-        )
-        if result.returncode == 0:
-            commit = result.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    if not getattr(sys, "frozen", False):
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=2, cwd=PROJECT_DIR,
+            )
+            if result.returncode == 0:
+                commit = result.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     return f"v{version} ({commit})"
 
@@ -106,7 +108,6 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
     def showEvent(self, event: object) -> None:
         """Force the window to foreground when shown."""
         super().showEvent(event)  # type: ignore[arg-type]
-        from PyQt6.QtCore import QTimer  # type: ignore[import-untyped]
         QTimer.singleShot(50, self._force_foreground)
 
     def _force_foreground(self) -> None:
@@ -150,6 +151,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         dcs_layout.addLayout(dir_row)
         layout.addWidget(dcs_group)
 
+
         # --- Aircraft Selection ---
         aircraft_group = QGroupBox("Aircraft")
         aircraft_layout = QVBoxLayout(aircraft_group)
@@ -173,6 +175,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._aircraft_combo.currentTextChanged.connect(self._on_aircraft_combo_changed)
 
         layout.addWidget(aircraft_group)
+
 
         # --- Display Options ---
         display_group = QGroupBox("Display")
@@ -207,6 +210,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         layout.addWidget(display_group)
 
+
         # --- Hotkey ---
         hotkey_group = QGroupBox("Palette Shortcut")
         hotkey_layout = QHBoxLayout(hotkey_group)
@@ -231,6 +235,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         layout.addWidget(hotkey_group)
 
+
         # --- Lua Hook ---
         hook_group = QGroupBox("DCS Lua Hook (auto-start/stop)")
         hook_layout = QVBoxLayout(hook_group)
@@ -251,6 +256,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         hook_layout.addLayout(hook_btn_row)
 
         layout.addWidget(hook_group)
+
 
         # --- DCS-BIOS ---
         bios_group = QGroupBox("DCS-BIOS")
@@ -287,6 +293,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         layout.addWidget(bios_group)
 
+
         # --- Info ---
         info_group = QGroupBox("Info")
         info_layout = QVBoxLayout(info_group)
@@ -309,6 +316,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         info_layout.addWidget(self._log_label)
 
         layout.addWidget(info_group)
+
 
         # --- Buttons ---
         btn_row = QHBoxLayout()

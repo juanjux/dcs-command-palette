@@ -693,7 +693,8 @@ class App:
 
     def _open_config(self) -> None:
         """Show the settings dialog."""
-        dialog = ConfigWindow(
+        from src.config.window import ConfigWindow as CW
+        dialog = CW(
             current_dcs_dir=self.dcs_dir or "",
             current_aircraft=self.aircraft or "",
             on_aircraft_changed=self._on_config_changed,
