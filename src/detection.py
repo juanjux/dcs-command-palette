@@ -323,6 +323,59 @@ def find_bios_json(dcs_saved_games: str, aircraft_module: str) -> Optional[str]:
     return None
 
 
+def suggest_bios_aircraft(dcs_saved_games: str, aircraft_module: str) -> Optional[str]:
+    """Find the most similar aircraft name that has a DCS-BIOS JSON file.
+
+    Used when the current aircraft (e.g. a mod) has no BIOS JSON.
+    Returns the BIOS aircraft name (JSON stem), not the file path.
+    E.g., for 'FA-18E' it might suggest 'FA-18C_hornet'.
+    """
+    json_dir = os.path.join(dcs_saved_games, "Scripts", "DCS-BIOS", "doc", "json")
+    if not os.path.isdir(json_dir):
+        return None
+
+    try:
+        available = os.listdir(json_dir)
+    except OSError:
+        return None
+
+    # Collect BIOS aircraft names (exclude metadata files)
+    skip = {"CommonData", "MetadataStart", "MetadataEnd", "AircraftAliases", "NS430", "FC3", "VNAO_Room"}
+    bios_names: List[str] = []
+    for filename in available:
+        if not filename.endswith(".json"):
+            continue
+        stem = filename[:-5]
+        if stem in skip:
+            continue
+        bios_names.append(stem)
+
+    if not bios_names:
+        return None
+
+    # Score by similarity: shared prefix length after normalizing
+    module_norm = aircraft_module.lower().replace("-", "").replace("_", "")
+
+    best_name: Optional[str] = None
+    best_score = 0
+
+    for name in bios_names:
+        name_norm = name.lower().replace("-", "").replace("_", "")
+        # Count shared prefix length
+        prefix_len = 0
+        for a, b in zip(module_norm, name_norm):
+            if a == b:
+                prefix_len += 1
+            else:
+                break
+        # Require at least 3 chars of prefix match to avoid nonsense suggestions
+        if prefix_len >= 3 and prefix_len > best_score:
+            best_score = prefix_len
+            best_name = name
+
+    return best_name
+
+
 def get_aircraft_saved_name(
     dcs_saved_games: str, aircraft_module: str,
 ) -> Optional[str]:

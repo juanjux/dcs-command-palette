@@ -36,7 +36,9 @@ from src.detection import (
     resolve_unit_type_to_module,
     save_dcs_install_dir,
     save_selected_aircraft,
+    suggest_bios_aircraft,
     _read_settings,
+    _save_settings,
 )
 from src.lib.logging_setup import setup_logging
 from src.palette.usage import UsageTracker
@@ -403,6 +405,8 @@ class App:
         self.state_reader = BiosStateReader()
         self.state_reader.start()
         self.palette: Optional[CommandPalette] = None
+        self._bios_missing = False  # True if no BIOS JSON found for current aircraft
+        self._bios_fallback_offered = False  # True after we've shown the fallback dialog
         self._load_commands()
 
         # Clean up any leftover shutdown file
@@ -555,13 +559,25 @@ class App:
         logger.info("Loading commands for %s...", self.aircraft)
 
         input_name = get_aircraft_input_name(self.dcs_dir, self.aircraft) if self.dcs_dir else None
-        bios_json = find_bios_json(DCS_SAVED_GAMES, self.aircraft or "")
+
+        # Check for a BIOS aircraft override (set when user accepted a fallback suggestion)
+        settings = _read_settings()
+        bios_override = settings.get("bios_aircraft_override")
+        if isinstance(bios_override, str) and bios_override:
+            bios_json = find_bios_json(DCS_SAVED_GAMES, bios_override)
+            if bios_json:
+                logger.info("Using BIOS override aircraft: %s", bios_override)
+        else:
+            bios_json = find_bios_json(DCS_SAVED_GAMES, self.aircraft or "")
         saved_name = get_aircraft_saved_name(DCS_SAVED_GAMES, self.aircraft or "")
 
         if bios_json:
             logger.info("DCS-BIOS JSON: %s", bios_json)
+            self._bios_missing = False
         else:
             logger.warning("No DCS-BIOS JSON found for %s", self.aircraft)
+            self._bios_missing = True
+            self._bios_fallback_offered = False
         if saved_name:
             logger.info("User keybinds: Config/Input/%s/", saved_name)
 
@@ -613,8 +629,49 @@ class App:
         if ok and choice and choice != self.aircraft:
             self.aircraft = choice
             save_selected_aircraft(choice)
+            # Clear any BIOS override when explicitly changing aircraft
+            settings = _read_settings()
+            settings.pop("bios_aircraft_override", None)
+            _save_settings(settings)
             self._load_commands()
             logger.info("Switched to %s", choice)
+
+    def _offer_bios_fallback(self) -> None:
+        """Show a dialog suggesting a similar aircraft for DCS-BIOS controls."""
+        self._bios_fallback_offered = True
+        suggestion = suggest_bios_aircraft(DCS_SAVED_GAMES, self.aircraft or "")
+
+        if suggestion:
+            answer = QMessageBox.question(
+                None,
+                "DCS-BIOS - Aircraft Not Found",
+                f"No DCS-BIOS definition found for '{self.aircraft}'.\n\n"
+                f"Would you like to use '{suggestion}' instead?\n"
+                f"(This is common for mod aircraft based on a stock plane.)\n\n"
+                f"Choose 'No' to open Settings and select manually.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                logger.info("User accepted BIOS fallback: %s -> %s", self.aircraft, suggestion)
+                # Save the BIOS override but keep the aircraft name
+                settings = _read_settings()
+                settings["bios_aircraft_override"] = suggestion
+                _save_settings(settings)
+                # Reload with the fallback BIOS JSON
+                self._load_commands()
+                return
+        else:
+            QMessageBox.warning(
+                None,
+                "DCS-BIOS - Aircraft Not Found",
+                f"No DCS-BIOS definition found for '{self.aircraft}',\n"
+                f"and no similar aircraft could be suggested.\n\n"
+                f"Opening Settings so you can select one manually.",
+            )
+
+        # Open settings if user declined or no suggestion
+        self._open_config()
 
     def _on_config_changed(self, new_dcs_dir: str, new_aircraft: str) -> None:
         """Called when the config window applies changes."""
@@ -678,6 +735,9 @@ class App:
             if self.palette.isVisible():
                 self.palette.hide_palette()
             else:
+                # On first open with missing BIOS, offer a fallback
+                if self._bios_missing and not self._bios_fallback_offered:
+                    self._offer_bios_fallback()
                 self.palette.show_palette()
 
         bridge.triggered.connect(toggle_palette)
