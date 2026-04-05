@@ -136,8 +136,36 @@ class ResultItem(QWidget):  # type: ignore[misc]
                 f"color: #cc3333; font-size: 10px; font-style: italic;"
             )
         else:
-            self.combo_label.setText(cmd.key_combo if cmd.key_combo else "")
-            self.combo_label.setStyleSheet(f"color: {TEXT_MUTED_COLOR}; font-size: 10px;")
+            # For simple BIOS toggles (max_value <= 1), show current state inline
+            state_text = self._get_toggle_state_text(cmd)
+            if state_text:
+                self.combo_label.setText(state_text)
+                self.combo_label.setStyleSheet(
+                    f"color: #88bbff; font-size: 10px; font-weight: bold;"
+                )
+            else:
+                self.combo_label.setText(cmd.key_combo if cmd.key_combo else "")
+                self.combo_label.setStyleSheet(f"color: {TEXT_MUTED_COLOR}; font-size: 10px;")
+
+    @staticmethod
+    def _get_toggle_state_text(cmd: Command) -> str:
+        """Return current state text for simple BIOS toggles, or '' if not applicable."""
+        if cmd.source != CommandSource.DCS_BIOS:
+            return ""
+        if ResultItem._state_reader is None or not ResultItem._state_reader.connected:
+            return ""
+        # Only for simple actions (max_value <= 1) that don't open a submenu
+        if not cmd.is_simple_action:
+            return ""
+        if cmd.output_address is None or cmd.output_mask is None or cmd.output_shift is None:
+            return ""
+
+        value = ResultItem._state_reader.get_value(
+            cmd.output_address, cmd.output_mask, cmd.output_shift,
+        )
+        if cmd.position_labels and value in cmd.position_labels:
+            return cmd.position_labels[value]
+        return "ON" if value else "OFF"
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
