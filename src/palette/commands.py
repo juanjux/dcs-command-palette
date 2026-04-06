@@ -1,6 +1,7 @@
 """Unified command abstraction for both DCS-BIOS controls and keyboard shortcuts."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -200,6 +201,32 @@ def _enrich_position_labels(
             cmd.position_labels = {i: p.name for i, p in enumerate(pos_infos)}
 
 
+def _fill_labels_from_json_positions(
+    commands: List[Command], json_path: str,
+) -> None:
+    """Fill position_labels from the BIOS JSON 'positions' array for commands
+    that still lack labels after keyboard enrichment."""
+    with open(json_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Build a lookup: identifier -> positions list
+    json_positions: Dict[str, List[str]] = {}
+    for _cat, controls in data.items():
+        for ctrl_id, ctrl in controls.items():
+            raw = ctrl.get("positions")
+            if raw and isinstance(raw, list) and len(raw) > 1:
+                json_positions[ctrl_id] = [str(p) for p in raw]
+
+    for cmd in commands:
+        if cmd.source != CommandSource.DCS_BIOS:
+            continue
+        if cmd.position_labels:
+            continue  # already has labels from enrichment or set_state description
+        positions = json_positions.get(cmd.identifier)
+        if positions and cmd.max_value is not None and len(positions) == cmd.max_value + 1:
+            cmd.position_labels = {i: p for i, p in enumerate(positions)}
+
+
 def load_all_commands(
     dcs_install_dir: str = DCS_INSTALL_DIR,
     aircraft_module: str = AIRCRAFT_MODULE,
@@ -242,5 +269,12 @@ def load_all_commands(
     # "FLIR Switch - OFF", "FLIR Switch - STBY", "FLIR Switch - ON"
     # -> extract {0: "OFF", 1: "STBY", 2: "ON"}
     _enrich_position_labels(commands, kb_entries)
+
+    # Last resort: fill remaining unlabelled selectors from the BIOS JSON
+    # "positions" array.  This comes AFTER keyboard enrichment because
+    # value_down-based sorting is more reliable than the JSON array order
+    # (e.g. FLAP_SW JSON says [AUTO,HALF,FULL] but BIOS position 0 is FULL).
+    if controls_json_path and os.path.exists(controls_json_path):
+        _fill_labels_from_json_positions(commands, controls_json_path)
 
     return commands

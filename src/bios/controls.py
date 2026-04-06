@@ -76,12 +76,6 @@ def load_controls(json_path: str) -> list[Control]:
 
             position_labels = _parse_position_labels(inputs)
 
-            # Fall back to the top-level "positions" array if present
-            if not position_labels:
-                raw_positions = ctrl.get("positions")
-                if raw_positions and isinstance(raw_positions, list) and len(raw_positions) > 1:
-                    position_labels = {i: str(p) for i, p in enumerate(raw_positions)}
-
             # Parse first integer output for state reading
             output_address: Optional[int] = None
             output_mask: Optional[int] = None
