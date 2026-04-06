@@ -298,6 +298,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
                 # Flash with a brief marker update
                 old_text = btn.text()
                 btn.setText(old_text.rstrip(" ◄") + " ◄")
+
         self._current_value = pos
         self.action_requested.emit(self.command.identifier, str(pos))
         # Delay close so the user sees the selection
