@@ -299,10 +299,24 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
                 old_text = btn.text()
                 btn.setText(old_text.rstrip(" ◄") + " ◄")
 
+        # Some DCS switches only allow single-step movement per command.
+        # Step through intermediate positions with delays when needed.
+        cmd = self.command
+        start = self._current_value if self._current_value is not None else 0
         self._current_value = pos
-        self.action_requested.emit(self.command.identifier, str(pos))
-        # Delay close so the user sees the selection
-        QTimer.singleShot(300, self.close_requested.emit)
+        distance = abs(pos - start)
+        if distance <= 1:
+            self.action_requested.emit(cmd.identifier, str(pos))
+        else:
+            step = 1 if pos > start else -1
+            for i, val in enumerate(range(start + step, pos + step, step)):
+                QTimer.singleShot(
+                    i * 200,
+                    lambda v=val: self.action_requested.emit(cmd.identifier, str(v)),
+                )
+        # Delay close: allow time for all steps to complete
+        close_delay = max(300, distance * 200 + 200)
+        QTimer.singleShot(close_delay, self.close_requested.emit)
 
     def _add_inc_dec(self, cmd: Command) -> None:
         row = QHBoxLayout()
@@ -740,13 +754,16 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         # DCS-BIOS: simple toggle (max_value <= 1)
         if cmd.max_value is not None and cmd.max_value <= 1:
+            # Get state text BEFORE sending the command
+            old_state = ResultItem._get_toggle_state_text(cmd)
             if cmd.has_toggle:
                 self._sender.toggle(cmd.identifier)
             elif cmd.has_fixed_step:
                 self._sender.inc(cmd.identifier)
             else:
                 self._sender.set_state(cmd.identifier, 1)
-            self.hide_palette()
+            # Show state transition animation instead of hiding immediately
+            self._animate_toggle(cmd, old_state)
             return
 
         # DCS-BIOS: complex control -> sub-menu
@@ -762,6 +779,44 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         elif cmd.has_fixed_step:
             self._sender.inc(cmd.identifier)
         self.hide_palette()
+
+    def _animate_toggle(self, cmd: Command, old_state: str) -> None:
+        """Show a brief state transition animation on the selected result item."""
+        if self._selected_index >= len(self._item_widgets):
+            self.hide_palette()
+            return
+
+        widget = self._item_widgets[self._selected_index]
+        label = widget.combo_label
+
+        if not old_state:
+            old_state = "OFF"
+
+        # Predict the new state (toggle flips the value)
+        if cmd.position_labels:
+            # Binary with named labels: flip between the two
+            labels = list(cmd.position_labels.values())
+            new_state = labels[1] if old_state == labels[0] else labels[0]
+        else:
+            new_state = "OFF" if old_state == "ON" else "ON"
+
+        # Phase 1: show "OLD → NEW" with highlight
+        label.setText(f"{old_state}  →  {new_state}")
+        label.setStyleSheet(
+            "color: #ffcc00; font-size: 11px; font-weight: bold;"
+        )
+
+        # Phase 2: after a beat, show just the new state in green
+        def _show_new() -> None:
+            label.setText(new_state)
+            label.setStyleSheet(
+                "color: #44dd44; font-size: 11px; font-weight: bold;"
+            )
+
+        QTimer.singleShot(500, _show_new)
+
+        # Phase 3: hide the palette
+        QTimer.singleShot(1000, self.hide_palette)
 
     def _get_current_bios_value(self, cmd: Command) -> Optional[int]:
         """Get the current integer value of a BIOS command from the live state."""
