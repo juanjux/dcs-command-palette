@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import Set, Tuple
 
 # Hotkey
@@ -13,7 +14,13 @@ DCS_BIOS_PORT: int = 7778
 PALETTE_LISTEN_PORT: int = 7780
 
 # Paths
-PROJECT_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# In PyInstaller --onedir mode, __file__ is inside _internal/src/config/settings.py
+# so we need to go up one extra level to reach the actual project directory.
+if getattr(sys, "frozen", False):
+    # Frozen exe: _internal/ contains the bundled code; project root is its parent
+    PROJECT_DIR: str = os.path.dirname(sys._MEIPASS)  # type: ignore[attr-defined]
+else:
+    PROJECT_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _detect_dcs_saved_games() -> str:
