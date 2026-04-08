@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,8 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
 
     action_requested = pyqtSignal(str, str)
     close_requested = pyqtSignal()
+    # Emitted on position press with (identifier, target_pos, original_pos) for hold support
+    hold_started = pyqtSignal(str, int, int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -189,6 +192,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         self._sender: Optional[DCSBiosSender] = None
         self._state_reader: Optional[BiosStateReader] = None
         self._slider: Optional[QSlider] = None
+        self._original_value: Optional[int] = None
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(12, 8, 12, 8)
         self._layout.setSpacing(6)
@@ -296,15 +300,15 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             is_new = (i == pos)
             btn.setStyleSheet(self._make_btn_style(is_new))
             if is_new and self._current_value != pos:
-                # Flash with a brief marker update
                 old_text = btn.text()
                 btn.setText(old_text.rstrip(" ◄") + " ◄")
 
-        # Some DCS switches only allow single-step movement per command.
-        # Step through intermediate positions with delays when needed.
         cmd = self.command
         start = self._current_value if self._current_value is not None else 0
+        self._original_value = start
         self._current_value = pos
+
+        # Send the position command (stepping through intermediates if needed)
         distance = abs(pos - start)
         if distance <= 1:
             self.action_requested.emit(cmd.identifier, str(pos))
@@ -315,9 +319,16 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
                     i * 200,
                     lambda v=val: self.action_requested.emit(cmd.identifier, str(v)),
                 )
-        # Delay close: allow time for all steps to complete
-        close_delay = max(300, distance * 200 + 200)
-        QTimer.singleShot(close_delay, self.close_requested.emit)
+
+        # Emit hold_started so the parent palette can track hold/release
+        self.hold_started.emit(cmd.identifier, pos, start)
+        # Schedule auto-close (cancelled by parent if hold is detected)
+        send_delay = max(0, distance * 200)
+        self._close_timer = QTimer()
+        self._close_timer.setSingleShot(True)
+        self._close_timer.setInterval(send_delay + 300)
+        self._close_timer.timeout.connect(self.close_requested.emit)
+        self._close_timer.start()
 
     def _add_inc_dec(self, cmd: Command) -> None:
         row = QHBoxLayout()
@@ -451,6 +462,13 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         # Callback for built-in palette commands (set by main.py)
         self.palette_command_triggered: Optional[object] = None
 
+        # Hold detection: press a switch and hold Enter/Space/mouse to keep it held
+        self._hold_active: bool = False
+        self._hold_press_time: float = 0.0
+        self._hold_cmd: Optional[Command] = None
+        self._hold_original_value: Optional[int] = None  # value to revert to on release
+        self._hold_threshold: float = 0.3  # seconds — longer than this = hold
+
         self._setup_window()
         self._build_ui()
 
@@ -535,6 +553,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._submenu = SubMenuWidget()
         self._submenu.action_requested.connect(self._on_submenu_action)
         self._submenu.close_requested.connect(self._close_submenu_and_hide)
+        self._submenu.hold_started.connect(self._on_submenu_hold_started)
         self._submenu.hide()
         self._container_layout.addWidget(self._submenu)
 
@@ -725,6 +744,17 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._update_results_display()
         self._execute_selected()
 
+    def mouseReleaseEvent(self, event: object) -> None:
+        """Detect mouse release for hold actions."""
+        if self._hold_active:
+            held_duration = time.time() - self._hold_press_time
+            was_held = held_duration >= self._hold_threshold
+            logger.info("Mouse hold released after %.2fs (%s)", held_duration,
+                        "held" if was_held else "tap")
+            self._finish_hold(was_held=was_held)
+            return
+        super().mouseReleaseEvent(event)  # type: ignore[arg-type]
+
     def _execute_selected(self) -> None:
         if not self._results or self._selected_index >= len(self._results):
             return
@@ -777,16 +807,18 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         # DCS-BIOS: simple toggle (max_value <= 1)
         if cmd.max_value is not None and cmd.max_value <= 1:
-            # Get state text BEFORE sending the command
             old_state = ResultItem._get_toggle_state_text(cmd)
-            if cmd.has_toggle:
-                self._sender.toggle(cmd.identifier)
-            elif cmd.has_fixed_step:
-                self._sender.inc(cmd.identifier)
-            else:
-                self._sender.set_state(cmd.identifier, 1)
-            # Show state transition animation instead of hiding immediately
-            self._animate_toggle(cmd, old_state)
+            original_value = self._get_current_bios_value(cmd)
+            # Use set_state instead of TOGGLE so we know the exact state for hold/revert
+            new_value = 0 if original_value else 1
+            self._sender.set_state(cmd.identifier, new_value)
+            # Set up hold tracking — palette stays open until key/mouse release
+            self._hold_active = True
+            self._hold_press_time = time.time()
+            self._hold_cmd = cmd
+            self._hold_original_value = original_value if original_value is not None else 0
+            # Show state transition animation; _finish_hold will handle hide
+            self._animate_toggle_hold(cmd, old_state)
             return
 
         # DCS-BIOS: complex control -> sub-menu
@@ -803,10 +835,15 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             self._sender.inc(cmd.identifier)
         self.hide_palette()
 
-    def _animate_toggle(self, cmd: Command, old_state: str) -> None:
-        """Show a brief state transition animation on the selected result item."""
+    def _animate_toggle_hold(self, cmd: Command, old_state: str) -> None:
+        """Show state transition on the selected result item.
+
+        The palette stays open for hold detection.  If the user releases
+        quickly (< threshold) the toggle is permanent and we hide.  If
+        they keep holding, we show "HOLDING" and revert on release.
+        """
         if self._selected_index >= len(self._item_widgets):
-            self.hide_palette()
+            self._finish_hold(was_held=False)
             return
 
         widget = self._item_widgets[self._selected_index]
@@ -817,11 +854,12 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         # Predict the new state (toggle flips the value)
         if cmd.position_labels:
-            # Binary with named labels: flip between the two
             labels = list(cmd.position_labels.values())
             new_state = labels[1] if old_state == labels[0] else labels[0]
         else:
             new_state = "OFF" if old_state == "ON" else "ON"
+
+        self._hold_new_state_text = new_state
 
         # Phase 1: show "OLD → NEW" with highlight
         label.setText(f"{old_state}  →  {new_state}")
@@ -829,17 +867,67 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             "color: #ffcc00; font-size: 11px; font-weight: bold;"
         )
 
-        # Phase 2: after a beat, show just the new state in green
-        def _show_new() -> None:
-            label.setText(new_state)
+        # Phase 2: after threshold, if still held show HOLDING indicator
+        def _check_still_held() -> None:
+            if self._hold_active:
+                label.setText(f"HOLDING {new_state}...")
+                label.setStyleSheet(
+                    "color: #ff8844; font-size: 11px; font-weight: bold;"
+                )
+            # If already released, _finish_hold handles the hide
+
+        QTimer.singleShot(int(self._hold_threshold * 1000), _check_still_held)
+
+    def _finish_hold(self, was_held: bool) -> None:
+        """Complete a hold action: revert if held, or just hide if tapped."""
+        cmd = self._hold_cmd
+        in_submenu = self._in_submenu
+
+        if was_held and cmd is not None and self._hold_original_value is not None:
+            # Revert to original state
+            logger.info("Hold released: reverting %s to %s", cmd.identifier, self._hold_original_value)
+            current = self._submenu._current_value if in_submenu else None
+            original = self._hold_original_value
+            # Step back through intermediate positions if needed
+            if in_submenu and current is not None:
+                distance = abs(original - current)
+                if distance <= 1:
+                    self._sender.set_state(cmd.identifier, original)
+                else:
+                    step = 1 if original > current else -1
+                    for i, val in enumerate(range(current + step, original + step, step)):
+                        QTimer.singleShot(
+                            i * 200,
+                            lambda v=val: self._sender.set_state(cmd.identifier, v),
+                        )
+            else:
+                self._sender.set_state(cmd.identifier, original)
+
+        # Clean up hold state
+        self._hold_active = False
+        self._hold_cmd = None
+        self._hold_original_value = None
+
+        # Stop the submenu's auto-close timer if still running
+        if in_submenu and hasattr(self._submenu, "_close_timer"):
+            self._submenu._close_timer.stop()
+
+        # Show brief visual feedback before hiding
+        if not in_submenu and not was_held and self._selected_index < len(self._item_widgets):
+            label = self._item_widgets[self._selected_index].combo_label
+            label.setText(getattr(self, "_hold_new_state_text", ""))
             label.setStyleSheet(
                 "color: #44dd44; font-size: 11px; font-weight: bold;"
             )
 
-        QTimer.singleShot(500, _show_new)
+        # Hide after a brief delay
+        def _do_hide() -> None:
+            if in_submenu:
+                self._in_submenu = False
+                self._submenu.hide()
+            self.hide_palette()
 
-        # Phase 3: hide the palette
-        QTimer.singleShot(1000, self.hide_palette)
+        QTimer.singleShot(300 if was_held else 500, _do_hide)
 
     def _get_current_bios_value(self, cmd: Command) -> Optional[int]:
         """Get the current integer value of a BIOS command from the live state."""
@@ -885,7 +973,19 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._sender.send(identifier, argument)
         self._restart_inactivity_timer()
 
+    def _on_submenu_hold_started(self, identifier: str, target_pos: int, original_pos: int) -> None:
+        """Set up hold tracking when a submenu position button is pressed."""
+        cmd = self._submenu.command
+        if cmd is None:
+            return
+        self._hold_active = True
+        self._hold_press_time = time.time()
+        self._hold_cmd = cmd
+        self._hold_original_value = original_pos
+
     def _close_submenu_and_hide(self) -> None:
+        if self._hold_active:
+            return  # don't auto-close while hold is in progress
         self._in_submenu = False
         self._submenu.hide()
         self.hide_palette()
@@ -929,6 +1029,10 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         key = event.key()
         logger.debug("keyPressEvent: key=%s (0x%x), in_submenu=%s", event.text(), key, self._in_submenu)
         self._restart_inactivity_timer()
+
+        # Ignore auto-repeat while hold is active (don't re-execute)
+        if self._hold_active and event.isAutoRepeat():
+            return
 
         if key == Qt.Key.Key_Escape:
             if self._in_submenu:
@@ -984,6 +1088,21 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return
 
         super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        if event.isAutoRepeat():
+            return  # ignore auto-repeat from held keys
+        key = event.key()
+        if self._hold_active and key in (
+            Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
+        ):
+            held_duration = time.time() - self._hold_press_time
+            was_held = held_duration >= self._hold_threshold
+            logger.info("Hold released after %.2fs (%s)", held_duration,
+                        "held" if was_held else "tap")
+            self._finish_hold(was_held=was_held)
+            return
+        super().keyReleaseEvent(event)
 
     def _submenu_navigate(self, reverse: bool = False) -> None:
         """Cycle focus through submenu buttons with Tab/Shift+Tab."""
