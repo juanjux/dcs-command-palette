@@ -24,3 +24,8 @@ settings.json
 
 # Inno Setup
 *.iss
+
+# Compiled executables / installer artifacts
+_internal/
+*.exe
+unins*.dat

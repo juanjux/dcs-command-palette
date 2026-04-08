@@ -1,14 +1,24 @@
 [project]
 name = "dcs-command-palette"
-version = "0.6.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "VS Code-style command palette overlay for DCS World with fuzzy search and DCS-BIOS integration"
 requires-python = ">=3.13"
+license = "MIT"
+authors = [
+    { name = "Juan Jose Alvarez Martinez", email = "juanjo@juanjoalvarez.net" },
+]
+keywords = ["dcs", "dcs-world", "command-palette", "dcs-bios", "overlay"]
 dependencies = [
     "pygame>=2.6.0",
     "pynput>=1.8.1",
     "pyqt6>=6.10.2",
     "rapidfuzz>=3.13.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/juanjux/dcs-command-palette"
+Repository = "https://github.com/juanjux/dcs-command-palette"
+Issues = "https://github.com/juanjux/dcs-command-palette/issues"
 
 [dependency-groups]
 dev = [
