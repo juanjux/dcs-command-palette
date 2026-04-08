@@ -31,6 +31,7 @@ from src.config.settings import (
     HIGHLIGHT_COLOR,
     IDENTIFIER_COLOR,
     IDENTIFIER_FONT_SIZE,
+    MAX_RESULTS,
     OVERLAY_MAX_HEIGHT,
     OVERLAY_WIDTH,
     SEARCH_BG_COLOR,
@@ -461,6 +462,16 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._inactivity_timer.setSingleShot(True)
         self._inactivity_timer.timeout.connect(self.hide_palette)
 
+        # Search debounce timer (40ms) — avoids redundant searches while typing
+        self._pending_query: str = ""
+        self._search_debounce = QTimer()
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(40)
+        self._search_debounce.timeout.connect(self._run_debounced_search)
+
+        # Pre-warm: compute default results and populate widgets while hidden
+        self._on_search_changed("")
+
         # Periodic BIOS connection status check — refresh results if status changes
         self._last_bios_connected = False
         self._bios_check_timer = QTimer()
@@ -499,7 +510,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
             f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
         )
-        self._search.textChanged.connect(self._on_search_changed)
+        self._search.textChanged.connect(self._on_text_changed)
         self._search.installEventFilter(self)
         self._container_layout.addWidget(self._search)
 
@@ -529,7 +540,13 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         self._main_layout.addWidget(self._container)
 
+        # Pre-create result item widgets to avoid allocation on first show
         self._item_widgets: List[ResultItem] = []
+        for i in range(MAX_RESULTS):
+            item_widget = ResultItem(self._results_widget)
+            item_widget.mousePressEvent = lambda e, idx=i: self._on_item_clicked(idx)  # type: ignore[assignment]
+            item_widget.hide()
+            self._item_widgets.append(item_widget)
 
     def _force_focus(self) -> None:
         """Force the palette window to the foreground and focus the search box.
@@ -664,11 +681,23 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self.hide()
         self._usage.save()
 
+    def _on_text_changed(self, text: str) -> None:
+        """Restart debounce timer on each keystroke."""
+        self._pending_query = text
+        self._search_debounce.start()
+        self._restart_inactivity_timer()
+
+    def _run_debounced_search(self) -> None:
+        """Execute search after debounce timer expires."""
+        self._results = search(self._pending_query, self._commands, self._usage)
+        self._selected_index = 0
+        self._update_results_display()
+
     def _on_search_changed(self, text: str) -> None:
+        """Direct (non-debounced) search — used by show_palette() and pre-warm."""
         self._results = search(text, self._commands, self._usage)
         self._selected_index = 0
         self._update_results_display()
-        self._restart_inactivity_timer()
 
     def _update_results_display(self) -> None:
         while self._results_layout.count() > 0:
@@ -676,12 +705,6 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             w = item.widget()
             if w:
                 w.hide()
-
-        while len(self._item_widgets) < len(self._results):
-            item_widget = ResultItem(self._results_widget)
-            idx = len(self._item_widgets)
-            item_widget.mousePressEvent = lambda e, i=idx: self._on_item_clicked(i)  # type: ignore[assignment]
-            self._item_widgets.append(item_widget)
 
         for i, cmd in enumerate(self._results):
             widget = self._item_widgets[i]

@@ -1,5 +1,6 @@
 import logging
 import socket
+import threading
 from typing import Optional, Tuple
 
 from src.config.settings import DCS_BIOS_HOST, DCS_BIOS_PORT
@@ -11,14 +12,22 @@ class DCSBiosSender:
     def __init__(self, host: str = DCS_BIOS_HOST, port: int = DCS_BIOS_PORT) -> None:
         self.addr: Tuple[str, int] = (host, port)
         self._tcp_sock: Optional[socket.socket] = None
-        # Detect whether DCS-BIOS listens on TCP or UDP.
-        # Newer versions (flightpanels/DCS-BIOS Hub) use TCP.
-        self._use_tcp = self._probe_tcp()
-        if self._use_tcp:
-            logger.info("DCS-BIOS sender using TCP to %s:%d", host, port)
+        self._use_tcp: Optional[bool] = None  # None = probe in progress
+        self._probe_done = threading.Event()
+        # Always create UDP socket (cheap fallback)
+        self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Probe TCP in background to avoid blocking startup
+        threading.Thread(target=self._run_probe, daemon=True).start()
+
+    def _run_probe(self) -> None:
+        """Probe DCS-BIOS protocol in a background thread."""
+        result = self._probe_tcp()
+        self._use_tcp = result
+        self._probe_done.set()
+        if result:
+            logger.info("DCS-BIOS sender using TCP to %s:%d", *self.addr)
         else:
-            logger.info("DCS-BIOS sender using UDP to %s:%d", host, port)
-            self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            logger.info("DCS-BIOS sender using UDP to %s:%d", *self.addr)
 
     def _probe_tcp(self) -> bool:
         """Check if DCS-BIOS is listening on TCP."""
@@ -48,6 +57,11 @@ class DCSBiosSender:
 
     def send(self, identifier: str, argument: str) -> None:
         message = f"{identifier} {argument}\n"
+        # Wait for probe if it hasn't finished yet (should be instant by first use)
+        if self._use_tcp is None:
+            self._probe_done.wait(timeout=1.0)
+            if self._use_tcp is None:
+                self._use_tcp = False  # default to UDP on timeout
         if self._use_tcp:
             sock = self._get_tcp_sock()
             if sock:
@@ -95,5 +109,4 @@ class DCSBiosSender:
                 self._tcp_sock.close()
             except OSError:
                 pass
-        if hasattr(self, "_udp_sock"):
-            self._udp_sock.close()
+        self._udp_sock.close()

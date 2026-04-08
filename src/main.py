@@ -800,6 +800,19 @@ class App:
         shutdown_timer.timeout.connect(self._check_shutdown)
         shutdown_timer.start(2000)
 
+        # Pre-warm ConfigWindow import in background so first settings open is instant
+        def _preimport_config() -> None:
+            import threading
+            def _do_import() -> None:
+                try:
+                    from src.config.window import ConfigWindow  # noqa: F401
+                    logger.debug("ConfigWindow pre-imported")
+                except Exception:
+                    pass
+            threading.Thread(target=_do_import, daemon=True).start()
+
+        QTimer.singleShot(2000, _preimport_config)
+
         logger.info("DCS Command Palette running. Press %s to open.", configured_hotkey)
 
         ret = self.qapp.exec()
