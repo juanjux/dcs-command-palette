@@ -460,7 +460,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._hold_press_time: float = 0.0
         self._hold_cmd: Optional[Command] = None
         self._hold_original_value: Optional[int] = None  # value to revert to on release
-        self._hold_threshold: float = 0.3  # seconds — longer than this = hold
+        self._hold_threshold: float = 0.6  # seconds — longer than this = hold
 
         self._setup_window()
         self._build_ui()
