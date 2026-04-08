@@ -304,15 +304,19 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         start = self._current_value if self._current_value is not None else 0
         self._current_value = pos
 
-        # Send the position command (stepping through intermediates if needed)
+        # Step through each position one at a time with delays.
+        # Some DCS switches only accept single-step movement per command cycle.
         distance = abs(pos - start)
-        if distance <= 1:
+        if distance == 0:
             self.action_requested.emit(cmd.identifier, str(pos))
         else:
             step = 1 if pos > start else -1
-            for i, val in enumerate(range(start + step, pos + step, step)):
+            positions = list(range(start + step, pos + step, step))
+            for i, val in enumerate(positions):
+                # Send each step with 200ms gap; first step also delayed
+                # so DCS has time to process the button click context switch
                 QTimer.singleShot(
-                    i * 200,
+                    50 + i * 200,
                     lambda v=val: self.action_requested.emit(cmd.identifier, str(v)),
                 )
         # Delay close: allow time for all steps to complete
