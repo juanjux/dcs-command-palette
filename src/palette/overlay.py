@@ -183,8 +183,6 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
 
     action_requested = pyqtSignal(str, str)
     close_requested = pyqtSignal()
-    # Emitted on position press with (identifier, target_pos, original_pos) for hold support
-    hold_started = pyqtSignal(str, int, int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -192,7 +190,6 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         self._sender: Optional[DCSBiosSender] = None
         self._state_reader: Optional[BiosStateReader] = None
         self._slider: Optional[QSlider] = None
-        self._original_value: Optional[int] = None
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(12, 8, 12, 8)
         self._layout.setSpacing(6)
@@ -305,7 +302,6 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
 
         cmd = self.command
         start = self._current_value if self._current_value is not None else 0
-        self._original_value = start
         self._current_value = pos
 
         # Send the position command (stepping through intermediates if needed)
@@ -319,16 +315,9 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
                     i * 200,
                     lambda v=val: self.action_requested.emit(cmd.identifier, str(v)),
                 )
-
-        # Emit hold_started so the parent palette can track hold/release
-        self.hold_started.emit(cmd.identifier, pos, start)
-        # Schedule auto-close (cancelled by parent if hold is detected)
-        send_delay = max(0, distance * 200)
-        self._close_timer = QTimer()
-        self._close_timer.setSingleShot(True)
-        self._close_timer.setInterval(send_delay + 300)
-        self._close_timer.timeout.connect(self.close_requested.emit)
-        self._close_timer.start()
+        # Delay close: allow time for all steps to complete
+        close_delay = max(300, distance * 200 + 200)
+        QTimer.singleShot(close_delay, self.close_requested.emit)
 
     def _add_inc_dec(self, cmd: Command) -> None:
         row = QHBoxLayout()
@@ -553,7 +542,6 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._submenu = SubMenuWidget()
         self._submenu.action_requested.connect(self._on_submenu_action)
         self._submenu.close_requested.connect(self._close_submenu_and_hide)
-        self._submenu.hold_started.connect(self._on_submenu_hold_started)
         self._submenu.hide()
         self._container_layout.addWidget(self._submenu)
 
@@ -879,55 +867,34 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         QTimer.singleShot(int(self._hold_threshold * 1000), _check_still_held)
 
     def _finish_hold(self, was_held: bool) -> None:
-        """Complete a hold action: revert if held, or just hide if tapped."""
+        """Complete a hold action on a binary toggle: revert if held, or just hide if tapped."""
         cmd = self._hold_cmd
-        in_submenu = self._in_submenu
 
         if was_held and cmd is not None and self._hold_original_value is not None:
             # Revert to original state
+            self._sender.set_state(cmd.identifier, self._hold_original_value)
             logger.info("Hold released: reverting %s to %s", cmd.identifier, self._hold_original_value)
-            current = self._submenu._current_value if in_submenu else None
-            original = self._hold_original_value
-            # Step back through intermediate positions if needed
-            if in_submenu and current is not None:
-                distance = abs(original - current)
-                if distance <= 1:
-                    self._sender.set_state(cmd.identifier, original)
-                else:
-                    step = 1 if original > current else -1
-                    for i, val in enumerate(range(current + step, original + step, step)):
-                        QTimer.singleShot(
-                            i * 200,
-                            lambda v=val: self._sender.set_state(cmd.identifier, v),
-                        )
+
+        # Show brief visual feedback
+        if self._selected_index < len(self._item_widgets):
+            label = self._item_widgets[self._selected_index].combo_label
+            if was_held:
+                label.setText("RELEASED")
+                label.setStyleSheet(
+                    "color: #aaaaaa; font-size: 11px; font-weight: bold;"
+                )
             else:
-                self._sender.set_state(cmd.identifier, original)
+                label.setText(getattr(self, "_hold_new_state_text", ""))
+                label.setStyleSheet(
+                    "color: #44dd44; font-size: 11px; font-weight: bold;"
+                )
 
         # Clean up hold state
         self._hold_active = False
         self._hold_cmd = None
         self._hold_original_value = None
 
-        # Stop the submenu's auto-close timer if still running
-        if in_submenu and hasattr(self._submenu, "_close_timer"):
-            self._submenu._close_timer.stop()
-
-        # Show brief visual feedback before hiding
-        if not in_submenu and not was_held and self._selected_index < len(self._item_widgets):
-            label = self._item_widgets[self._selected_index].combo_label
-            label.setText(getattr(self, "_hold_new_state_text", ""))
-            label.setStyleSheet(
-                "color: #44dd44; font-size: 11px; font-weight: bold;"
-            )
-
-        # Hide after a brief delay
-        def _do_hide() -> None:
-            if in_submenu:
-                self._in_submenu = False
-                self._submenu.hide()
-            self.hide_palette()
-
-        QTimer.singleShot(300 if was_held else 500, _do_hide)
+        QTimer.singleShot(400, self.hide_palette)
 
     def _get_current_bios_value(self, cmd: Command) -> Optional[int]:
         """Get the current integer value of a BIOS command from the live state."""
@@ -973,19 +940,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._sender.send(identifier, argument)
         self._restart_inactivity_timer()
 
-    def _on_submenu_hold_started(self, identifier: str, target_pos: int, original_pos: int) -> None:
-        """Set up hold tracking when a submenu position button is pressed."""
-        cmd = self._submenu.command
-        if cmd is None:
-            return
-        self._hold_active = True
-        self._hold_press_time = time.time()
-        self._hold_cmd = cmd
-        self._hold_original_value = original_pos
-
     def _close_submenu_and_hide(self) -> None:
-        if self._hold_active:
-            return  # don't auto-close while hold is in progress
         self._in_submenu = False
         self._submenu.hide()
         self.hide_palette()
