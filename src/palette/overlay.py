@@ -156,8 +156,8 @@ class ResultItem(QWidget):  # type: ignore[misc]
             return ""
         if ResultItem._state_reader is None or not ResultItem._state_reader.connected:
             return ""
-        # Only for simple actions (max_value <= 1) that don't open a submenu
-        if not cmd.is_simple_action:
+        # Only for stateful switches (max_value <= 1), not momentary pushbuttons
+        if not cmd.is_simple_action or cmd.is_momentary:
             return ""
         if cmd.output_address is None or cmd.output_mask is None or cmd.output_shift is None:
             return ""
@@ -183,6 +183,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
 
     action_requested = pyqtSignal(str, str)
     close_requested = pyqtSignal()
+    spring_hold_requested = pyqtSignal(str, int)  # identifier, center_position — hold mode for spring-loaded switches
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -190,6 +191,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         self._sender: Optional[DCSBiosSender] = None
         self._state_reader: Optional[BiosStateReader] = None
         self._slider: Optional[QSlider] = None
+        self._step_generation: int = 0  # incremented on each position select to cancel stale timers
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(12, 8, 12, 8)
         self._layout.setSpacing(6)
@@ -292,17 +294,49 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
     def _on_position(self, pos: int) -> None:
         if not self.command:
             return
+        # Cancel any pending step/close timers from a previous selection
+        self._step_generation += 1
+        gen = self._step_generation
+
         # Visually update: highlight the selected button, dim the old one
         for i, btn in enumerate(self._buttons):
             is_new = (i == pos)
             btn.setStyleSheet(self._make_btn_style(is_new))
-            if is_new and self._current_value != pos:
-                old_text = btn.text()
-                btn.setText(old_text.rstrip(" ◄") + " ◄")
+            text = btn.text().rstrip(" ◄")
+            btn.setText(f"{text} ◄" if is_new else text)
 
         cmd = self.command
-        start = self._current_value if self._current_value is not None else 0
         self._current_value = pos
+
+        # ── Spring-loaded switches (engine crank, HDG, CRS) ──
+        # Send target position directly (no stepping — the switch accepts
+        # any position via set_state).  Off-center positions (0, 2) enter
+        # hold mode so the switch stays there until the user releases.
+        if cmd.is_spring_loaded:
+            self.action_requested.emit(cmd.identifier, str(pos))
+            if pos != 1:
+                # Off-center: enter hold mode (recenter on release)
+                logger.info("Spring-loaded hold: %s → position %d (center=1)", cmd.identifier, pos)
+                self.spring_hold_requested.emit(cmd.identifier, 1)
+            else:
+                # Center position: just send and close
+                QTimer.singleShot(300, self.close_requested.emit)
+            return
+
+        # ── Regular multi-position switches ──
+        # Re-read the actual BIOS value instead of using cached _current_value.
+        start = self._current_value if self._current_value is not None else 0
+        if (self._state_reader and self._state_reader.connected
+                and cmd.output_address is not None
+                and cmd.output_mask is not None
+                and cmd.output_shift is not None):
+            bios_val = self._state_reader.get_value(
+                cmd.output_address, cmd.output_mask, cmd.output_shift,
+            )
+            if bios_val is not None:
+                start = bios_val
+                logger.debug("_on_position: BIOS value for %s = %d (cached was %s)",
+                             cmd.identifier, bios_val, self._current_value)
 
         # Step through each position one at a time with delays.
         # Some DCS switches only accept single-step movement per command cycle.
@@ -313,15 +347,19 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             step = 1 if pos > start else -1
             positions = list(range(start + step, pos + step, step))
             for i, val in enumerate(positions):
-                # Send each step with 200ms gap; first step also delayed
-                # so DCS has time to process the button click context switch
                 QTimer.singleShot(
                     50 + i * 200,
-                    lambda v=val: self.action_requested.emit(cmd.identifier, str(v)),
+                    lambda v=val, g=gen: (
+                        self.action_requested.emit(cmd.identifier, str(v))
+                        if self._step_generation == g else None
+                    ),
                 )
         # Delay close: allow time for all steps to complete
         close_delay = max(300, distance * 200 + 200)
-        QTimer.singleShot(close_delay, self.close_requested.emit)
+        QTimer.singleShot(
+            close_delay,
+            lambda g=gen: self.close_requested.emit() if self._step_generation == g else None,
+        )
 
     def _add_inc_dec(self, cmd: Command) -> None:
         row = QHBoxLayout()
@@ -451,16 +489,21 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._results: List[Command] = []
         self._selected_index: int = 0
         self._in_submenu: bool = False
+        self._show_time: float = 0.0  # timestamp of last show_palette() call
 
         # Callback for built-in palette commands (set by main.py)
         self.palette_command_triggered: Optional[object] = None
 
         # Hold detection: press a switch and hold Enter/Space/mouse to keep it held
         self._hold_active: bool = False
+        self._hold_confirmed: bool = False  # True once auto-repeat detected (real hold)
+        self._hold_is_momentary: bool = False  # True for pushbuttons (release on key-up)
         self._hold_press_time: float = 0.0
         self._hold_cmd: Optional[Command] = None
         self._hold_original_value: Optional[int] = None  # value to revert to on release
-        self._hold_threshold: float = 0.6  # seconds — longer than this = hold
+        self._hold_threshold: float = 0.6  # seconds — visual "HOLDING" indicator delay
+        self._action_cooldown: float = 0.0  # blocks re-execution during visual feedback
+        self._spring_hold_identifier: Optional[str] = None  # spring-loaded switch identifier
 
         self._setup_window()
         self._build_ui()
@@ -546,6 +589,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._submenu = SubMenuWidget()
         self._submenu.action_requested.connect(self._on_submenu_action)
         self._submenu.close_requested.connect(self._close_submenu_and_hide)
+        self._submenu.spring_hold_requested.connect(self._on_spring_hold)
         self._submenu.hide()
         self._container_layout.addWidget(self._submenu)
 
@@ -648,6 +692,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             self._inactivity_timer.stop()
 
     def show_palette(self) -> None:
+        self._show_time = time.time()  # guard against ghost keypresses
         self._in_submenu = False
         self._submenu.hide()
         self._scroll.show()
@@ -680,6 +725,16 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._fade_anim.start()
 
     def hide_palette(self) -> None:
+        # Always clean up hold state when hiding to prevent stale state
+        if self._hold_active:
+            logger.debug("hide_palette: clearing stale hold state")
+        self._hold_active = False
+        self._hold_confirmed = False
+        self._hold_is_momentary = False
+        self._hold_cmd = None
+        self._hold_original_value = None
+        self._spring_hold_identifier = None
+
         self._fade_anim.stop()
         self._fade_anim.setDuration(80)
         self._fade_anim.setStartValue(1.0)
@@ -737,13 +792,14 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._execute_selected()
 
     def mouseReleaseEvent(self, event: object) -> None:
-        """Detect mouse release for hold actions."""
+        """Detect mouse release for hold actions (momentary buttons + spring-loaded switches)."""
         if self._hold_active:
             held_duration = time.time() - self._hold_press_time
-            was_held = held_duration >= self._hold_threshold
-            logger.info("Mouse hold released after %.2fs (%s)", held_duration,
-                        "held" if was_held else "tap")
-            self._finish_hold(was_held=was_held)
+            logger.info("Mouse hold release after %.2fs", held_duration)
+            if getattr(self, "_spring_hold_identifier", None):
+                self._finish_spring_hold()
+            else:
+                self._finish_hold()
             return
         super().mouseReleaseEvent(event)  # type: ignore[arg-type]
 
@@ -752,6 +808,9 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return
 
         cmd = self._results[self._selected_index]
+        logger.info("Execute: %s (is_momentary=%s, max_value=%s, api_variant=%r, control_type=%r)",
+                     cmd.identifier, cmd.is_momentary, cmd.max_value,
+                     cmd.api_variant, cmd.control_type)
         self._usage.record_use(cmd.identifier)
 
         # DCS-BIOS command while not connected
@@ -797,20 +856,31 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                 QTimer.singleShot(1500, self._reset_search_style)
             return
 
-        # DCS-BIOS: simple toggle (max_value <= 1)
+        # DCS-BIOS: momentary pushbutton (press now, release on key/mouse-up)
+        if cmd.is_momentary and cmd.max_value is not None and cmd.max_value <= 1:
+            self._sender.set_state(cmd.identifier, 1)
+            logger.info("Momentary press: %s (is_momentary=True)", cmd.identifier)
+            self._action_cooldown = time.time()
+            # Set up hold tracking — release happens on key/mouse release
+            self._hold_active = True
+            self._hold_confirmed = False
+            self._hold_is_momentary = True
+            self._hold_press_time = time.time()
+            self._hold_cmd = cmd
+            self._hold_original_value = None  # not used for momentary
+            self._animate_momentary_press(cmd)
+            return
+
+        # DCS-BIOS: simple toggle (max_value <= 1, stateful switch)
+        # No hold tracking — toggles are permanent. Just toggle, animate, hide.
         if cmd.max_value is not None and cmd.max_value <= 1:
             old_state = ResultItem._get_toggle_state_text(cmd)
             original_value = self._get_current_bios_value(cmd)
-            # Use set_state instead of TOGGLE so we know the exact state for hold/revert
             new_value = 0 if original_value else 1
             self._sender.set_state(cmd.identifier, new_value)
-            # Set up hold tracking — palette stays open until key/mouse release
-            self._hold_active = True
-            self._hold_press_time = time.time()
-            self._hold_cmd = cmd
-            self._hold_original_value = original_value if original_value is not None else 0
-            # Show state transition animation; _finish_hold will handle hide
-            self._animate_toggle_hold(cmd, old_state)
+            logger.info("Toggle %s: %s → %s", cmd.identifier, original_value, new_value)
+            self._action_cooldown = time.time()
+            self._animate_toggle(cmd, old_state)
             return
 
         # DCS-BIOS: complex control -> sub-menu
@@ -827,15 +897,13 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             self._sender.inc(cmd.identifier)
         self.hide_palette()
 
-    def _animate_toggle_hold(self, cmd: Command, old_state: str) -> None:
-        """Show state transition on the selected result item.
+    def _animate_toggle(self, cmd: Command, old_state: str) -> None:
+        """Show state transition on the selected result item, then hide.
 
-        The palette stays open for hold detection.  If the user releases
-        quickly (< threshold) the toggle is permanent and we hide.  If
-        they keep holding, we show "HOLDING" and revert on release.
+        Toggle switches are permanent — no hold detection, no revert.
         """
         if self._selected_index >= len(self._item_widgets):
-            self._finish_hold(was_held=False)
+            self.hide_palette()
             return
 
         widget = self._item_widgets[self._selected_index]
@@ -851,52 +919,91 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         else:
             new_state = "OFF" if old_state == "ON" else "ON"
 
-        self._hold_new_state_text = new_state
-
-        # Phase 1: show "OLD → NEW" with highlight
+        # Show "OLD → NEW" with highlight, then green confirmation, then hide
         label.setText(f"{old_state}  →  {new_state}")
         label.setStyleSheet(
             "color: #ffcc00; font-size: 11px; font-weight: bold;"
         )
 
-        # Phase 2: after threshold, if still held show HOLDING indicator
+        def _show_confirmed() -> None:
+            label.setText(new_state)
+            label.setStyleSheet(
+                "color: #44dd44; font-size: 11px; font-weight: bold;"
+            )
+
+        QTimer.singleShot(300, _show_confirmed)
+        QTimer.singleShot(700, self.hide_palette)
+
+    def _animate_momentary_press(self, cmd: Command) -> None:
+        """Show press animation for a momentary pushbutton.
+
+        Shows "PRESSED" immediately.  After 1 second (if still held),
+        transitions to "HOLDING...".  Release is handled by _finish_hold.
+        """
+        if self._selected_index >= len(self._item_widgets):
+            self._finish_hold(was_held=False)
+            return
+
+        widget = self._item_widgets[self._selected_index]
+        label = widget.combo_label
+
+        # Show "PRESSED" with highlight
+        label.setText("PRESSED")
+        label.setStyleSheet(
+            "color: #ffcc00; font-size: 11px; font-weight: bold;"
+        )
+
+        # After 500ms, if still held show HOLDING indicator (time-based)
         def _check_still_held() -> None:
-            if self._hold_active:
-                label.setText(f"HOLDING {new_state}...")
+            if self._hold_active and time.time() - self._hold_press_time >= 0.5:
+                label.setText("HOLDING...")
                 label.setStyleSheet(
                     "color: #ff8844; font-size: 11px; font-weight: bold;"
                 )
-            # If already released, _finish_hold handles the hide
 
-        QTimer.singleShot(int(self._hold_threshold * 1000), _check_still_held)
+        QTimer.singleShot(500, _check_still_held)
 
-    def _finish_hold(self, was_held: bool) -> None:
-        """Complete a hold action on a binary toggle: revert if held, or just hide if tapped."""
+    def _finish_hold(self, _was_held: bool = False) -> None:
+        """Complete a momentary hold: always release the button (set_state 0)."""
         cmd = self._hold_cmd
+        elapsed = time.time() - self._hold_press_time
+        genuinely_held = elapsed >= 0.5  # match the visual threshold
 
-        if was_held and cmd is not None and self._hold_original_value is not None:
-            # Revert to original state
-            self._sender.set_state(cmd.identifier, self._hold_original_value)
-            logger.info("Hold released: reverting %s to %s", cmd.identifier, self._hold_original_value)
+        if cmd is not None:
+            # Always release the button on key/mouse-up.
+            # Ensure a minimum 150ms press so DCS registers it.
+            min_press = 0.15
+            if elapsed < min_press:
+                remaining_ms = int((min_press - elapsed) * 1000)
+                identifier = cmd.identifier  # capture for lambda
+                QTimer.singleShot(remaining_ms, lambda: self._sender.set_state(identifier, 0))
+                logger.info("Momentary release (delayed %dms): %s after %.2fs",
+                            remaining_ms, cmd.identifier, elapsed)
+            else:
+                self._sender.set_state(cmd.identifier, 0)
+                logger.info("Momentary release: %s after %.2fs", cmd.identifier, elapsed)
 
         # Show brief visual feedback
         if self._selected_index < len(self._item_widgets):
             label = self._item_widgets[self._selected_index].combo_label
-            if was_held:
+            if genuinely_held:
                 label.setText("RELEASED")
                 label.setStyleSheet(
                     "color: #aaaaaa; font-size: 11px; font-weight: bold;"
                 )
             else:
-                label.setText(getattr(self, "_hold_new_state_text", ""))
+                label.setText("PRESSED")
                 label.setStyleSheet(
                     "color: #44dd44; font-size: 11px; font-weight: bold;"
                 )
 
         # Clean up hold state
         self._hold_active = False
+        self._hold_confirmed = False
+        self._hold_is_momentary = False
         self._hold_cmd = None
         self._hold_original_value = None
+        self._action_cooldown = time.time()  # block re-execution during feedback
 
         QTimer.singleShot(400, self.hide_palette)
 
@@ -944,6 +1051,55 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._sender.send(identifier, argument)
         self._restart_inactivity_timer()
 
+    def _on_spring_hold(self, identifier: str, center_pos: int) -> None:
+        """Enter hold mode for a spring-loaded switch (engine crank, HDG, CRS).
+
+        The switch has been moved to an off-center position.  When the user
+        releases Enter/Space/mouse, we send set_state(center_pos) to recenter.
+        """
+        self._hold_active = True
+        self._hold_confirmed = False
+        self._hold_is_momentary = False
+        self._hold_press_time = time.time()
+        self._hold_cmd = None  # not used — we store identifier directly
+        self._hold_original_value = center_pos
+        self._spring_hold_identifier = identifier
+        self._action_cooldown = time.time()
+
+        # Show "HOLDING..." indicator on the selected submenu button
+        if self._submenu._buttons:
+            for btn in self._submenu._buttons:
+                if "◄" in btn.text():
+                    btn.setText(btn.text().rstrip(" ◄") + " — HOLDING...")
+                    btn.setStyleSheet(
+                        "QPushButton { color: #ff8844; background: rgba(60,80,40,200); "
+                        "border: 2px solid #ff8844; border-radius: 4px; "
+                        "padding: 8px 16px; text-align: left; font-size: 13px; font-weight: bold; }"
+                    )
+                    break
+
+    def _finish_spring_hold(self) -> None:
+        """Release a spring-loaded switch back to center."""
+        identifier = getattr(self, "_spring_hold_identifier", None)
+        center_pos = self._hold_original_value
+        if identifier is not None and center_pos is not None:
+            elapsed = time.time() - self._hold_press_time
+            self._sender.set_state(identifier, center_pos)
+            logger.info("Spring-loaded release: %s → center(%d) after %.2fs",
+                        identifier, center_pos, elapsed)
+
+        # Clean up hold state
+        self._hold_active = False
+        self._hold_confirmed = False
+        self._hold_is_momentary = False
+        self._hold_cmd = None
+        self._hold_original_value = None
+        self._spring_hold_identifier = None
+        self._action_cooldown = time.time()
+
+        # Close submenu and hide
+        self._close_submenu_and_hide()
+
     def _close_submenu_and_hide(self) -> None:
         self._in_submenu = False
         self._submenu.hide()
@@ -960,7 +1116,15 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self.adjustSize()
 
     def eventFilter(self, obj: object, event: object) -> bool:
-        """Intercept Tab/Shift+Tab before Qt's default focus chain."""
+        """Intercept key events on child widgets (search bar, submenu buttons)."""
+        # Forward keyRelease to overlay during spring-loaded hold so release is detected
+        if (isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyRelease
+                and self._hold_active and not event.isAutoRepeat()):
+            key = event.key()
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                self.keyReleaseEvent(event)
+                return True
+
         if isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
                 reverse = (event.key() == Qt.Key.Key_Backtab
@@ -986,14 +1150,33 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
         key = event.key()
-        logger.debug("keyPressEvent: key=%s (0x%x), in_submenu=%s", event.text(), key, self._in_submenu)
+        logger.debug("keyPressEvent: key=%s (0x%x), in_submenu=%s, hold=%s, autoRepeat=%s",
+                      event.text(), key, self._in_submenu, self._hold_active, event.isAutoRepeat())
         self._restart_inactivity_timer()
 
-        # Ignore auto-repeat while hold is active (don't re-execute)
-        if self._hold_active and event.isAutoRepeat():
+        # ── Hold guard: while a momentary hold is active, consume ALL Enter/Space.
+        # Auto-repeat events are noted but never re-execute the command.
+        if self._hold_active and key in (
+            Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
+        ):
+            return  # always consume — never re-execute during hold
+
+        # ── Global auto-repeat guard: NEVER re-execute on auto-repeat Enter/Space.
+        # This prevents toggle switches from flipping back when the user
+        # holds Enter slightly too long (Windows auto-repeat starts at ~250ms).
+        if event.isAutoRepeat() and key in (
+            Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
+        ):
             return
 
         if key == Qt.Key.Key_Escape:
+            if self._hold_active:
+                # Cancel hold — for spring-loaded, recenter; for momentary, release
+                if getattr(self, "_spring_hold_identifier", None):
+                    self._finish_spring_hold()
+                else:
+                    self._finish_hold()
+                return
             if self._in_submenu:
                 self._back_from_submenu()
             else:
@@ -1043,6 +1226,15 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return
 
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            now = time.time()
+            # Guard 1: ignore Enter within 300ms of palette open (ghost events)
+            if now - self._show_time < 0.3:
+                logger.debug("Ignoring Enter: within 300ms of palette open")
+                return
+            # Guard 2: ignore Enter within 500ms of last action (feedback window)
+            if now - self._action_cooldown < 0.5:
+                logger.debug("Ignoring Enter: within 500ms of last action")
+                return
             self._execute_selected()
             return
 
@@ -1056,10 +1248,12 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
         ):
             held_duration = time.time() - self._hold_press_time
-            was_held = held_duration >= self._hold_threshold
-            logger.info("Hold released after %.2fs (%s)", held_duration,
-                        "held" if was_held else "tap")
-            self._finish_hold(was_held=was_held)
+            logger.info("Hold key released after %.2fs", held_duration)
+            # Dispatch to the right handler
+            if getattr(self, "_spring_hold_identifier", None):
+                self._finish_spring_hold()
+            else:
+                self._finish_hold()
             return
         super().keyReleaseEvent(event)
 

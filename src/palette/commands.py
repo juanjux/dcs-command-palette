@@ -28,6 +28,7 @@ class Command:
 
     # DCS-BIOS specific
     control_type: str = ""
+    api_variant: str = ""  # "momentary_last_position" = pushbutton (press & release)
     inputs: List[Dict[str, Any]] = field(default_factory=list)
     max_value: Optional[int] = None
     has_toggle: bool = False
@@ -44,6 +45,45 @@ class Command:
 
     # Keyboard shortcut specific
     key_combo: str = ""
+
+    @property
+    def is_momentary(self) -> bool:
+        """True for momentary pushbuttons that spring back (press & release).
+
+        Detection strategy (ordered by reliability):
+        1. BIOS JSON ``api_variant == "momentary_last_position"``
+        2. Identifier ends with ``_BTN`` (e.g. TO_TRIM_BTN, FCS_RESET_BTN)
+        3. Identifier contains ``_PB_`` or ends with ``_PB`` (e.g. AMPCD_PB_01)
+        4. Description contains "Button"/"Pushbutton" but not "Switch"
+        """
+        if self.api_variant == "momentary_last_position":
+            return True
+        if self.source != CommandSource.DCS_BIOS:
+            return False
+        if self.max_value is None or self.max_value > 1:
+            return False  # multi-position selectors are never momentary
+        ident = self.identifier
+        if ident.endswith("_BTN") or "_PB_" in ident or ident.endswith("_PB"):
+            return True
+        desc = self.description.lower()
+        if ("button" in desc or "pushbutton" in desc) and "switch" not in desc:
+            return True
+        return False
+
+    @property
+    def is_spring_loaded(self) -> bool:
+        """True for 3-position spring-loaded switches that recenter.
+
+        Detected by position labels containing "held" for off-center positions
+        (e.g. "held left/down", "held right/up") — engine crank, HDG, CRS.
+        """
+        if self.source != CommandSource.DCS_BIOS:
+            return False
+        if self.max_value != 2 or not self.position_labels:
+            return False
+        p0 = self.position_labels.get(0, "").lower()
+        p2 = self.position_labels.get(2, "").lower()
+        return "held" in p0 or "held" in p2
 
     @property
     def is_simple_action(self) -> bool:
@@ -67,6 +107,7 @@ def _control_to_command(ctrl: Control) -> Command:
         source=CommandSource.DCS_BIOS,
         search_text=search_text,
         control_type=ctrl.control_type,
+        api_variant=ctrl.api_variant,
         inputs=ctrl.inputs,
         max_value=ctrl.max_value,
         has_toggle=ctrl.has_toggle,

@@ -615,7 +615,7 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
         super().__init__(parent)  # type: ignore[arg-type]
         self.captured_combo: str = ""
         self.setWindowTitle("Set Shortcut")
-        self.setMinimumSize(350, 120)
+        self.setMinimumSize(400, 150)
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Dialog
         )
@@ -629,7 +629,37 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
         self._label.setStyleSheet("font-size: 14px; padding: 16px;")
         layout.addWidget(self._label)
 
+        # Buttons row for joystick confirmation (hidden until a joystick button is detected)
+        self._btn_row = QHBoxLayout()
+        self._btn_row.setSpacing(12)
+
+        self._use_btn = QPushButton("Use this")
+        self._use_btn.setStyleSheet(
+            "QPushButton { padding: 8px 20px; font-size: 13px; font-weight: bold; "
+            "background: rgba(60,120,220,180); color: white; border-radius: 4px; }"
+            "QPushButton:hover { background: rgba(60,120,220,255); }"
+        )
+        self._use_btn.clicked.connect(self.accept)
+        self._use_btn.hide()
+
+        self._ignore_btn = QPushButton("Ignore this")
+        self._ignore_btn.setStyleSheet(
+            "QPushButton { padding: 8px 20px; font-size: 13px; "
+            "background: rgba(80,50,50,180); color: #ffaaaa; border-radius: 4px; }"
+            "QPushButton:hover { background: rgba(120,50,50,220); }"
+        )
+        self._ignore_btn.clicked.connect(self._ignore_current)
+        self._ignore_btn.hide()
+
+        self._btn_row.addStretch()
+        self._btn_row.addWidget(self._use_btn)
+        self._btn_row.addWidget(self._ignore_btn)
+        self._btn_row.addStretch()
+        layout.addLayout(self._btn_row)
+
         self._modifiers: list[str] = []
+        self._ignored_buttons: set[str] = set()  # e.g. {"Joy0_Button46"}
+        self._pending_joy_combo: str = ""  # joystick combo awaiting confirmation
 
         # Start joystick polling timer
         self._joy_timer = QTimer(self)
@@ -647,13 +677,47 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
 
         pressed = poll_joystick_buttons()
         if pressed:
-            btn = pressed[0]  # Take the first pressed button
-            self.captured_combo = f"Joy{btn.joy_id}_Button{btn.button}"
-            self._label.setText(
-                f"Captured: {self.captured_combo}\n({btn.joy_name})"
-            )
-            self._joy_timer.stop()
-            QTimer.singleShot(400, self.accept)
+            # Find the first button that isn't in the ignore list
+            for btn in pressed:
+                combo = f"Joy{btn.joy_id}_Button{btn.button}"
+                if combo not in self._ignored_buttons:
+                    # Show for confirmation instead of auto-accepting
+                    self._pending_joy_combo = combo
+                    self.captured_combo = combo
+                    self._joy_timer.stop()
+                    ignored_text = (
+                        f"\n(ignoring {len(self._ignored_buttons)} noisy button"
+                        f"{'s' if len(self._ignored_buttons) != 1 else ''})"
+                        if self._ignored_buttons else ""
+                    )
+                    self._label.setText(
+                        f"Detected: {combo}\n({btn.joy_name}){ignored_text}"
+                    )
+                    self._use_btn.show()
+                    self._ignore_btn.show()
+                    return
+
+    def _ignore_current(self) -> None:
+        """Add the currently detected joystick button to the ignore list and resume."""
+        if self._pending_joy_combo:
+            self._ignored_buttons.add(self._pending_joy_combo)
+            logger.info("Ignoring joystick button: %s", self._pending_joy_combo)
+            self._pending_joy_combo = ""
+            self.captured_combo = ""
+
+        self._use_btn.hide()
+        self._ignore_btn.hide()
+        ignored_text = (
+            f"Ignoring {len(self._ignored_buttons)} noisy button"
+            f"{'s' if len(self._ignored_buttons) != 1 else ''}\n\n"
+        )
+        self._label.setText(
+            f"{ignored_text}"
+            "Press a key combination or joystick button...\n\n"
+            "(Press Escape to cancel)"
+        )
+        # Resume polling
+        self._joy_timer.start(100)
 
     def keyPressEvent(self, event: object) -> None:
         from PyQt6.QtGui import QKeyEvent  # type: ignore[import-untyped]
@@ -696,6 +760,7 @@ class _HotkeyCaptureDialog(QDialog):  # type: ignore[misc]
             self.captured_combo = "+".join(parts)
             self._label.setText(f"Captured: {self.captured_combo}")
             self._joy_timer.stop()
+            # Keyboard combos auto-accept (intentional press)
             QTimer.singleShot(400, self.accept)
 
     def reject(self) -> None:

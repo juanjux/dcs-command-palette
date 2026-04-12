@@ -13,6 +13,7 @@ class Control:
     description: str
     category: str
     control_type: str
+    api_variant: str = ""  # e.g. "momentary_last_position" for pushbuttons
     inputs: List[Dict[str, Any]] = field(default_factory=list)
     max_value: Optional[int] = None
     has_toggle: bool = False
@@ -96,6 +97,7 @@ def load_controls(json_path: str) -> list[Control]:
                 description=ctrl.get("description", ""),
                 category=category_name,
                 control_type=ctrl.get("control_type", ""),
+                api_variant=ctrl.get("api_variant", ""),
                 inputs=inputs,
                 max_value=max_value,
                 has_toggle=has_toggle,

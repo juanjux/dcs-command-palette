@@ -63,24 +63,38 @@ def get_joystick_names() -> Dict[int, str]:
     return names
 
 
+_prev_button_state: Dict[tuple[int, int], bool] = {}
+
+
 def poll_joystick_buttons() -> List[JoystickButton]:
-    """Poll all joysticks and return any currently pressed buttons."""
+    """Return joystick buttons that were *just pressed* (edge-triggered).
+
+    Compares current button state against the previous poll to detect
+    transitions from released→pressed.  This avoids phantom detections
+    from buttons that report as permanently held (e.g. axes mapped as
+    buttons, or noisy MFD signals).
+    """
     _ensure_init()
-    # Must pump events for SDL to update joystick state
     pygame.event.pump()
 
     results: List[JoystickButton] = []
     count = pygame.joystick.get_count()
+    seen: Dict[tuple[int, int], bool] = {}
     for i in range(count):
         try:
             js = pygame.joystick.Joystick(i)
             js.init()
             name = js.get_name()
             for btn in range(js.get_numbuttons()):
-                if js.get_button(btn):
+                key = (i, btn)
+                pressed = bool(js.get_button(btn))
+                seen[key] = pressed
+                was_pressed = _prev_button_state.get(key, False)
+                if pressed and not was_pressed:
                     results.append(JoystickButton(joy_id=i, joy_name=name, button=btn))
         except pygame.error:
             continue
+    _prev_button_state.update(seen)
     return results
 
 

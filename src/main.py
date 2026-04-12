@@ -673,9 +673,52 @@ class App:
         # Open settings if user declined or no suggestion
         self._open_config()
 
+    def _install_hotkey(self, hotkey: str) -> None:
+        """Set up the hotkey listener (joystick or keyboard) for the given combo."""
+        # Joystick hotkey listener (if hotkey is a joystick button)
+        self._joy_listener = JoystickHotkeyListener(
+            hotkey, lambda: self._bridge.triggered.emit(),
+        )
+        if self._joy_listener.is_joystick_hotkey:
+            self._joy_listener.start()
+
+        # Low-level keyboard hook (works even when DCS has focus)
+        self._kb_hook = LowLevelKeyboardHook(lambda: self._bridge.triggered.emit())
+        if not self._joy_listener.is_joystick_hotkey:
+            if not self._kb_hook.install():
+                logger.warning("Falling back to RegisterHotKey (won't work in fullscreen DCS)")
+                ctypes.windll.user32.RegisterHotKey(None, 1, 0x0002 | 0x4000, VK_SPACE)
+
+        self._configured_hotkey = hotkey
+
+    def _reload_hotkey(self) -> None:
+        """Re-read the hotkey from settings and swap listeners if changed."""
+        settings = _read_settings()
+        new_hotkey = str(settings.get("hotkey", "Ctrl+Space"))
+        if new_hotkey == self._configured_hotkey:
+            return
+
+        logger.info("Hotkey changed: %s → %s", self._configured_hotkey, new_hotkey)
+
+        # Tear down old listeners
+        if self._joy_listener:
+            self._joy_listener.stop()
+            self._joy_listener = None
+        if self._kb_hook:
+            self._kb_hook.uninstall()
+            self._kb_hook = None
+
+        # Install new ones
+        self._install_hotkey(new_hotkey)
+
+        # Update tray tooltip
+        if hasattr(self, "_tray") and self._tray:
+            self._tray.setToolTip(f"DCS Command Palette ({new_hotkey})")
+
     def _on_config_changed(self, new_dcs_dir: str, new_aircraft: str) -> None:
         """Called when the config window applies changes."""
         self._load_display_settings()
+        self._reload_hotkey()
         # Re-create sender with potentially updated BIOS host/port
         self.sender.close()
         self.sender = DCSBiosSender(host=cfg.DCS_BIOS_HOST, port=cfg.DCS_BIOS_PORT)
@@ -754,24 +797,16 @@ class App:
         settings = _read_settings()
         configured_hotkey = str(settings.get("hotkey", "Ctrl+Space"))
 
-        # Joystick hotkey listener (if hotkey is a joystick button)
-        joy_listener = JoystickHotkeyListener(
-            configured_hotkey, lambda: bridge.triggered.emit(),
-        )
-        if joy_listener.is_joystick_hotkey:
-            joy_listener.start()
-
-        # Low-level keyboard hook (works even when DCS has focus)
-        kb_hook = LowLevelKeyboardHook(lambda: bridge.triggered.emit())
-        if not joy_listener.is_joystick_hotkey:
-            if not kb_hook.install():
-                logger.warning("Falling back to RegisterHotKey (won't work in fullscreen DCS)")
-                ctypes.windll.user32.RegisterHotKey(None, 1, 0x0002 | 0x4000, VK_SPACE)
+        # Store references for hotkey reloading
+        self._bridge = bridge
+        self._joy_listener: Optional[JoystickHotkeyListener] = None
+        self._kb_hook: Optional[LowLevelKeyboardHook] = None
+        self._configured_hotkey = configured_hotkey
+        self._install_hotkey(configured_hotkey)
 
         # System tray
-        tray = QSystemTrayIcon(_create_tray_icon())
-        hotkey_display = configured_hotkey
-        tray.setToolTip(f"DCS Command Palette ({hotkey_display})")
+        self._tray = tray = QSystemTrayIcon(_create_tray_icon())
+        tray.setToolTip(f"DCS Command Palette ({configured_hotkey})")
         tray.activated.connect(
             lambda reason: self.palette.show_palette()
             if reason == QSystemTrayIcon.ActivationReason.DoubleClick
@@ -817,8 +852,10 @@ class App:
 
         ret = self.qapp.exec()
 
-        joy_listener.stop()
-        kb_hook.uninstall()
+        if self._joy_listener:
+            self._joy_listener.stop()
+        if self._kb_hook:
+            self._kb_hook.uninstall()
         udp_listener.stop()
         self._cleanup_shutdown_file()
         self.usage.save()
