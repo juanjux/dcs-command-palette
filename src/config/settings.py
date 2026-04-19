@@ -74,10 +74,17 @@ ACCENT_COLOR: str = "#4a9eff"
 IDENTIFIER_COLOR: str = "#ffffff"
 CATEGORY_COLOR: str = "#6a9fff"
 
-# Fonts
+# Fonts — base values, scaled at runtime by text_size setting
 SEARCH_FONT_SIZE: int = 18
 IDENTIFIER_FONT_SIZE: int = 14
 DESCRIPTION_FONT_SIZE: int = 12
+CATEGORY_FONT_SIZE: int = 11
+COMBO_FONT_SIZE: int = 10
+SUBMENU_BUTTON_FONT_SIZE: int = 13
+SUBMENU_HEADER_FONT_SIZE: int = 12
+STRING_INPUT_FONT_SIZE: int = 14
+RESULT_ITEM_HEIGHT: int = 52
+TEXT_SIZE_PRESET: str = "normal"  # tiny, small, normal, big, huge
 
 # Display options
 SHOW_IDENTIFIERS: bool = False  # Show DCS-BIOS identifiers below the description

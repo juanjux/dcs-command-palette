@@ -130,6 +130,9 @@ class LowLevelKeyboardHook:
 
 class HotkeyBridge(QObject):  # type: ignore[misc]
     triggered = pyqtSignal()
+    # Fired by NavJoystickListener on a button edge. Payload is "up" or "down".
+    # Consumed on the Qt thread and dispatched to the palette.
+    nav_triggered = pyqtSignal(str)
 
 
 class UDPToggleListener:
@@ -231,6 +234,82 @@ class JoystickHotkeyListener:
 
     def stop(self) -> None:
         self._running = False
+
+
+class NavJoystickListener:
+    """Polls optional joystick bindings for palette navigation (up/down).
+
+    Each binding is a string in the same format accepted by the palette
+    toggle hotkey (``Joy<id>_Button<num>``); non-joystick or empty strings
+    are ignored.  Fires the given callback on each rising edge only while
+    ``is_active()`` returns True — so bindings don't eat joystick inputs
+    when the palette is hidden.
+    """
+
+    _JOY_RE = re.compile(r"^Joy(\d+)_Button(\d+)$")
+
+    def __init__(
+        self,
+        bindings: dict[str, str],
+        on_action: "callable",  # type: ignore[valid-type]
+        is_active: "callable",  # type: ignore[valid-type]
+    ) -> None:
+        # bindings: {"up": "Joy0_Button5", "down": ""}
+        self._entries: list[tuple[str, int, int]] = []
+        for action_name, combo in bindings.items():
+            if not combo:
+                continue
+            m = self._JOY_RE.match(combo)
+            if m:
+                self._entries.append(
+                    (action_name, int(m.group(1)), int(m.group(2))),
+                )
+        self._on_action = on_action
+        self._is_active = is_active
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def has_joystick_bindings(self) -> bool:
+        return bool(self._entries)
+
+    def start(self) -> bool:
+        if not self.has_joystick_bindings:
+            return False
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._poll_loop, name="NavJoystickListener", daemon=True,
+        )
+        self._thread.start()
+        logger.info(
+            "Nav joystick listener started for %d binding(s)",
+            len(self._entries),
+        )
+        return True
+
+    def stop(self) -> None:
+        self._running = False
+
+    def _poll_loop(self) -> None:
+        from src.lib.joystick import is_button_pressed
+
+        last_state: dict[tuple[int, int], bool] = {}
+        while self._running:
+            try:
+                for action_name, joy_id, button in self._entries:
+                    key = (joy_id, button)
+                    pressed = is_button_pressed(joy_id, button)
+                    was = last_state.get(key, False)
+                    if pressed and not was:
+                        try:
+                            if self._is_active():
+                                self._on_action(action_name)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("nav callback failed")
+                    last_state[key] = pressed
+            except Exception:  # noqa: BLE001
+                logger.exception("Nav joystick poll error")
+            time.sleep(0.05)
 
 
 def _ensure_dcs_install_dir(app: QApplication) -> Optional[str]:
@@ -553,6 +632,28 @@ class App:
         cfg.OVERLAY_POSITION = str(settings.get("overlay_position", "top-center"))
         cfg.DCS_BIOS_HOST = str(settings.get("dcs_bios_host", "127.0.0.1"))
         cfg.DCS_BIOS_PORT = int(settings.get("dcs_bios_port", 7778))
+        cfg.MAX_RESULTS = max(3, min(30, int(settings.get("max_results", 12))))
+
+        # Text size: scale base font constants by preset multiplier
+        _TEXT_SCALES = {
+            "tiny": 0.70, "small": 0.85, "normal": 1.0, "big": 1.2, "huge": 1.5,
+        }
+        _TEXT_BASE = {
+            "SEARCH_FONT_SIZE": 18,
+            "IDENTIFIER_FONT_SIZE": 14,
+            "DESCRIPTION_FONT_SIZE": 12,
+            "CATEGORY_FONT_SIZE": 11,
+            "COMBO_FONT_SIZE": 10,
+            "SUBMENU_BUTTON_FONT_SIZE": 13,
+            "SUBMENU_HEADER_FONT_SIZE": 12,
+            "STRING_INPUT_FONT_SIZE": 14,
+            "RESULT_ITEM_HEIGHT": 52,
+        }
+        text_size = str(settings.get("text_size", "normal"))
+        scale = _TEXT_SCALES.get(text_size, 1.0)
+        for name, base in _TEXT_BASE.items():
+            setattr(cfg, name, max(1, int(round(base * scale))))
+        cfg.TEXT_SIZE_PRESET = text_size
 
     def _load_commands(self) -> None:
         """Load (or reload) commands for the current aircraft."""
@@ -673,6 +774,44 @@ class App:
         # Open settings if user declined or no suggestion
         self._open_config()
 
+    def _apply_nav_bindings(self, settings: dict) -> None:
+        """Install optional up/down palette navigation bindings.
+
+        Each binding can be either a keyboard combo (e.g. ``Ctrl+J``) —
+        registered as a QShortcut on the palette — or a joystick button
+        (``Joy<id>_Button<num>``) — polled in a background thread.
+
+        Bindings only fire while the palette is visible so they don't eat
+        stick inputs during flight.
+        """
+        up = str(settings.get("hotkey_nav_up", ""))
+        down = str(settings.get("hotkey_nav_down", ""))
+
+        # Keyboard shortcuts — handled by Qt directly
+        if self.palette is not None:
+            self.palette.apply_keyboard_nav_bindings(up, down)
+
+        # Tear down any existing joystick listener
+        if self._nav_joy_listener is not None:
+            self._nav_joy_listener.stop()
+            self._nav_joy_listener = None
+
+        # Joystick polling — only if at least one is a joystick binding
+        def _on_action(name: str) -> None:
+            # Bridge back to the Qt thread via a queued signal
+            self._bridge.nav_triggered.emit(name)
+
+        def _is_active() -> bool:
+            return bool(self.palette is not None and self.palette.isVisible())
+
+        self._nav_joy_listener = NavJoystickListener(
+            bindings={"up": up, "down": down},
+            on_action=_on_action,
+            is_active=_is_active,
+        )
+        if self._nav_joy_listener.has_joystick_bindings:
+            self._nav_joy_listener.start()
+
     def _install_hotkey(self, hotkey: str) -> None:
         """Set up the hotkey listener (joystick or keyboard) for the given combo."""
         # Joystick hotkey listener (if hotkey is a joystick button)
@@ -724,6 +863,10 @@ class App:
         self.sender = DCSBiosSender(host=cfg.DCS_BIOS_HOST, port=cfg.DCS_BIOS_PORT)
         if self.palette:
             self.palette._sender = self.sender
+            # Live-reapply font sizes / result count / row heights
+            self.palette._apply_display_settings()
+        # Apply (or reapply) navigation bindings — user may have changed them
+        self._apply_nav_bindings(_read_settings())
         changed = False
         if new_dcs_dir != self.dcs_dir:
             self.dcs_dir = new_dcs_dir
@@ -786,6 +929,16 @@ class App:
 
         bridge.triggered.connect(toggle_palette)
 
+        def dispatch_nav(action: str) -> None:
+            if not self.palette or not self.palette.isVisible():
+                return
+            if action == "up":
+                self.palette.nav_select_up()
+            elif action == "down":
+                self.palette.nav_select_down()
+
+        bridge.nav_triggered.connect(dispatch_nav)
+
         # UDP toggle listener (for triggering from inside DCS via Lua hook)
         udp_listener = UDPToggleListener(
             PALETTE_LISTEN_PORT,
@@ -803,6 +956,10 @@ class App:
         self._kb_hook: Optional[LowLevelKeyboardHook] = None
         self._configured_hotkey = configured_hotkey
         self._install_hotkey(configured_hotkey)
+
+        # Optional user-configured navigation bindings (up / down).
+        self._nav_joy_listener: Optional[NavJoystickListener] = None
+        self._apply_nav_bindings(settings)
 
         # System tray
         self._tray = tray = QSystemTrayIcon(_create_tray_icon())
@@ -854,6 +1011,8 @@ class App:
 
         if self._joy_listener:
             self._joy_listener.stop()
+        if self._nav_joy_listener is not None:
+            self._nav_joy_listener.stop()
         if self._kb_hook:
             self._kb_hook.uninstall()
         udp_listener.stop()

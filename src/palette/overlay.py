@@ -28,15 +28,11 @@ from src.config.settings import (
     ACCENT_COLOR,
     BG_COLOR,
     CATEGORY_COLOR,
-    DESCRIPTION_FONT_SIZE,
     HIGHLIGHT_COLOR,
     IDENTIFIER_COLOR,
-    IDENTIFIER_FONT_SIZE,
-    MAX_RESULTS,
     OVERLAY_MAX_HEIGHT,
     OVERLAY_WIDTH,
     SEARCH_BG_COLOR,
-    SEARCH_FONT_SIZE,
     TEXT_COLOR,
     TEXT_MUTED_COLOR,
 )
@@ -44,17 +40,18 @@ from src.bios.state import BiosStateReader
 from src.bios.sender import DCSBiosSender
 from src.lib.key_sender import send_key_combo
 from src.lib.search import search
-from src.palette.usage import UsageTracker
+from src.palette.usage import UsageTracker  # noqa: F401 — used as type hint
 
 
 class ResultItem(QWidget):  # type: ignore[misc]
     _state_reader: Optional[BiosStateReader] = None
+    _usage: Optional[UsageTracker] = None
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.command: Optional[Command] = None
         self._selected: bool = False
-        self.setFixedHeight(52)
+        self.setFixedHeight(cfg.RESULT_ITEM_HEIGHT)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 6, 16, 6)
@@ -66,14 +63,14 @@ class ResultItem(QWidget):  # type: ignore[misc]
 
         self.id_label = QLabel()
         self.id_label.setStyleSheet(
-            f"color: {IDENTIFIER_COLOR}; font-size: {IDENTIFIER_FONT_SIZE}px; "
+            f"color: {IDENTIFIER_COLOR}; font-size: {cfg.IDENTIFIER_FONT_SIZE}px; "
             f"font-family: 'Consolas', 'Courier New', monospace; font-weight: bold;"
         )
         left.addWidget(self.id_label)
 
         self.desc_label = QLabel()
         self.desc_label.setStyleSheet(
-            f"color: {TEXT_MUTED_COLOR}; font-size: {DESCRIPTION_FONT_SIZE}px;"
+            f"color: {TEXT_MUTED_COLOR}; font-size: {cfg.DESCRIPTION_FONT_SIZE}px;"
         )
         left.addWidget(self.desc_label)
 
@@ -86,7 +83,7 @@ class ResultItem(QWidget):  # type: ignore[misc]
 
         self.cat_label = QLabel()
         self.cat_label.setStyleSheet(
-            f"color: {CATEGORY_COLOR}; font-size: 11px; "
+            f"color: {CATEGORY_COLOR}; font-size: {cfg.CATEGORY_FONT_SIZE}px; "
             f"padding: 2px 8px; border: 1px solid {CATEGORY_COLOR}; border-radius: 3px;"
         )
         self.cat_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -94,12 +91,22 @@ class ResultItem(QWidget):  # type: ignore[misc]
 
         self.combo_label = QLabel()
         self.combo_label.setStyleSheet(
-            f"color: {TEXT_MUTED_COLOR}; font-size: 10px;"
+            f"color: {TEXT_MUTED_COLOR}; font-size: {cfg.COMBO_FONT_SIZE}px;"
         )
         self.combo_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         right.addWidget(self.combo_label)
 
         layout.addLayout(right)
+
+        # Favorite star — far right. Direct child of self so geometry() is
+        # in ResultItem coordinates for hit-testing in mousePressEvent.
+        self.star_label = QLabel("☆")
+        self.star_label.setFixedWidth(28)
+        self.star_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.star_label.setStyleSheet(
+            "color: #666666; font-size: 18px; background: transparent;"
+        )
+        layout.addWidget(self.star_label)
 
     def set_command(self, cmd: Command) -> None:
         self.command = cmd
@@ -115,27 +122,33 @@ class ResultItem(QWidget):  # type: ignore[misc]
 
         self.id_label.setText(cmd.description)
         self.id_label.setStyleSheet(
-            f"color: {dim}; font-size: {IDENTIFIER_FONT_SIZE}px; "
+            f"color: {dim}; font-size: {cfg.IDENTIFIER_FONT_SIZE}px; "
             f"font-family: 'Consolas', 'Courier New', monospace; font-weight: bold;"
         )
         if cfg.SHOW_IDENTIFIERS:
             self.desc_label.setText(cmd.identifier)
-            self.desc_label.setStyleSheet(f"color: {dim_desc}; font-size: {DESCRIPTION_FONT_SIZE}px;")
+            self.desc_label.setStyleSheet(
+                f"color: {dim_desc}; font-size: {cfg.DESCRIPTION_FONT_SIZE}px;"
+            )
             self.desc_label.show()
         else:
             self.desc_label.setText("")
             self.desc_label.hide()
         cat = cmd.category if len(cmd.category) <= 30 else cmd.category[:27] + "..."
         self.cat_label.setText(cat)
+        self.cat_label.setStyleSheet(
+            f"color: {CATEGORY_COLOR}; font-size: {cfg.CATEGORY_FONT_SIZE}px; "
+            f"padding: 2px 8px; border: 1px solid {CATEGORY_COLOR}; border-radius: 3px;"
+        )
         if bios_offline:
             self.combo_label.setText("DCS-BIOS offline")
             self.combo_label.setStyleSheet(
-                f"color: #cc3333; font-size: 10px; font-style: italic;"
+                f"color: #cc3333; font-size: {cfg.COMBO_FONT_SIZE}px; font-style: italic;"
             )
         elif unbound:
             self.combo_label.setText("no key")
             self.combo_label.setStyleSheet(
-                f"color: #cc3333; font-size: 10px; font-style: italic;"
+                f"color: #cc3333; font-size: {cfg.COMBO_FONT_SIZE}px; font-style: italic;"
             )
         else:
             # For simple BIOS toggles (max_value <= 1), show current state inline
@@ -143,11 +156,28 @@ class ResultItem(QWidget):  # type: ignore[misc]
             if state_text:
                 self.combo_label.setText(state_text)
                 self.combo_label.setStyleSheet(
-                    f"color: #88bbff; font-size: 10px; font-weight: bold;"
+                    f"color: #88bbff; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
                 )
             else:
                 self.combo_label.setText(cmd.key_combo if cmd.key_combo else "")
-                self.combo_label.setStyleSheet(f"color: {TEXT_MUTED_COLOR}; font-size: 10px;")
+                self.combo_label.setStyleSheet(
+                    f"color: {TEXT_MUTED_COLOR}; font-size: {cfg.COMBO_FONT_SIZE}px;"
+                )
+
+        # Favorite star. Built-in palette commands (identifier starts with __)
+        # don't get a star — they can't be meaningfully favorited.
+        if cmd.identifier.startswith("__") and cmd.identifier.endswith("__"):
+            self.star_label.setText("")
+        elif ResultItem._usage is not None and ResultItem._usage.is_favorite(cmd.identifier):
+            self.star_label.setText("★")
+            self.star_label.setStyleSheet(
+                "color: #ffcc33; font-size: 18px; background: transparent;"
+            )
+        else:
+            self.star_label.setText("☆")
+            self.star_label.setStyleSheet(
+                "color: #666666; font-size: 18px; background: transparent;"
+            )
 
     @staticmethod
     def _get_toggle_state_text(cmd: Command) -> str:
@@ -210,7 +240,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         if cfg.SHOW_IDENTIFIERS:
             header = QLabel(f"  {cmd.identifier}")
             header.setStyleSheet(
-                f"color: {ACCENT_COLOR}; font-size: 12px;"
+                f"color: {ACCENT_COLOR}; font-size: {cfg.SUBMENU_HEADER_FONT_SIZE}px;"
             )
             self._layout.addWidget(header)
 
@@ -256,13 +286,13 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             return (
                 f"QPushButton {{ color: #ffffff; background: rgba(60,120,220,180); "
                 f"border: 2px solid {ACCENT_COLOR}; border-radius: 4px; "
-                f"padding: 8px 16px; text-align: left; font-size: 13px; font-weight: bold; }}"
+                f"padding: 8px 16px; text-align: left; font-size: {cfg.SUBMENU_BUTTON_FONT_SIZE}px; font-weight: bold; }}"
                 f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,220); }}"
             )
         return (
             f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
             f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
-            f"padding: 8px 16px; text-align: left; font-size: 13px; }}"
+            f"padding: 8px 16px; text-align: left; font-size: {cfg.SUBMENU_BUTTON_FONT_SIZE}px; }}"
             f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
         )
 
@@ -371,7 +401,7 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
             btn.setStyleSheet(
                 f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
                 f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
-                f"padding: 8px 24px; font-size: 13px; font-weight: bold; }}"
+                f"padding: 8px 24px; font-size: {cfg.SUBMENU_BUTTON_FONT_SIZE}px; font-weight: bold; }}"
                 f"QPushButton:hover, QPushButton:focus {{ background: rgba(60,120,220,120); }}"
             )
 
@@ -424,7 +454,9 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         initial = self._current_value if self._current_value is not None else 0
         slider.setValue(initial)
         value_label = QLabel(str(initial))
-        value_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px; min-width: 50px;")
+        value_label.setStyleSheet(
+            f"color: {TEXT_COLOR}; font-size: {cfg.SUBMENU_HEADER_FONT_SIZE}px; min-width: 50px;"
+        )
         value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         def on_value(v: int) -> None:
@@ -447,12 +479,12 @@ class SubMenuWidget(QWidget):  # type: ignore[misc]
         text_input.setStyleSheet(
             f"color: {TEXT_COLOR}; background: rgba(50,50,70,200); "
             f"border: 1px solid rgba(100,100,140,150); border-radius: 4px; "
-            f"padding: 8px; font-size: 14px;"
+            f"padding: 8px; font-size: {cfg.STRING_INPUT_FONT_SIZE}px;"
         )
         send_btn = QPushButton("Send")
         send_btn.setStyleSheet(
             f"QPushButton {{ color: {TEXT_COLOR}; background: rgba(60,120,220,180); "
-            f"border-radius: 4px; padding: 8px 16px; font-size: 13px; font-weight: bold; }}"
+            f"border-radius: 4px; padding: 8px 16px; font-size: {cfg.SUBMENU_BUTTON_FONT_SIZE}px; font-weight: bold; }}"
             f"QPushButton:hover {{ background: rgba(60,120,220,255); }}"
         )
 
@@ -485,6 +517,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._usage = usage
         self._state_reader = state_reader
         ResultItem._state_reader = state_reader
+        ResultItem._usage = usage
         self._sender = sender
         self._results: List[Command] = []
         self._selected_index: int = 0
@@ -562,7 +595,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
             f"border: none; border-bottom: 1px solid rgba(80,80,120,150); "
             f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
-            f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+            f"padding: 12px 16px; font-size: {cfg.SEARCH_FONT_SIZE}px; }}"
         )
         self._search.textChanged.connect(self._on_text_changed)
         self._search.installEventFilter(self)
@@ -595,13 +628,31 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         self._main_layout.addWidget(self._container)
 
-        # Pre-create result item widgets to avoid allocation on first show
+        # Pre-create result item widgets to avoid allocation on first show.
+        # More widgets are created on demand if cfg.MAX_RESULTS grows at runtime
+        # (see _ensure_item_widgets()).
         self._item_widgets: List[ResultItem] = []
-        for i in range(MAX_RESULTS):
+        self._ensure_item_widgets(cfg.MAX_RESULTS)
+
+        # Enable mouse tracking so movement over the palette restarts the
+        # auto-hide timer (gives users time to click small star targets).
+        self._enable_hover_tracking()
+
+    def _ensure_item_widgets(self, count: int) -> None:
+        """Grow the pre-created result-item pool to at least `count` widgets."""
+        grew = False
+        while len(self._item_widgets) < count:
+            i = len(self._item_widgets)
             item_widget = ResultItem(self._results_widget)
-            item_widget.mousePressEvent = lambda e, idx=i: self._on_item_clicked(idx)  # type: ignore[assignment]
+            item_widget.mousePressEvent = (  # type: ignore[assignment]
+                lambda e, idx=i: self._on_item_mouse_press(idx, e)
+            )
             item_widget.hide()
             self._item_widgets.append(item_widget)
+            grew = True
+        if grew and hasattr(self, "_inactivity_timer"):
+            # New widgets need mouse tracking / event filter wired up too.
+            self._enable_hover_tracking()
 
     def _force_focus(self) -> None:
         """Force the palette window to the foreground and focus the search box.
@@ -672,8 +723,12 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         else:  # center
             x = (screen_w - self.width()) // 2
 
-        # Vertical — estimate overlay height (~60px search + results)
-        overlay_h = min(OVERLAY_MAX_HEIGHT, 60 + len(self._results) * 50)
+        # Vertical — estimate overlay height (~60px search + results), capped
+        # to available screen height so bottom-aligned overlays stay on-screen.
+        overlay_h = min(
+            max(cfg.RESULT_ITEM_HEIGHT, screen_h - 90),
+            60 + len(self._results) * cfg.RESULT_ITEM_HEIGHT,
+        )
         if v == "top":
             y = int(screen_h * 0.10)
         elif v == "bottom":
@@ -690,6 +745,22 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             logger.debug("Inactivity timer restarted (%ds)", timeout)
         else:
             self._inactivity_timer.stop()
+
+    def _enable_hover_tracking(self) -> None:
+        """Enable mouse tracking on the palette and all descendant widgets so
+        any mouse movement over the palette restarts the auto-hide timer.
+        Gives the user time to aim for small targets like the favorite star.
+        """
+        self.setMouseTracking(True)
+        for w in self.findChildren(QWidget):
+            w.setMouseTracking(True)
+            # Install event filter so we catch MouseMove events that child
+            # widgets consume before they'd ever reach our mouseMoveEvent.
+            w.installEventFilter(self)
+
+    def mouseMoveEvent(self, event: object) -> None:  # type: ignore[override]
+        self._restart_inactivity_timer()
+        super().mouseMoveEvent(event)  # type: ignore[misc]
 
     def show_palette(self) -> None:
         self._show_time = time.time()  # guard against ghost keypresses
@@ -782,14 +853,77 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._results_layout.addStretch()
 
         item_count = len(self._results)
-        results_height = min(item_count * 52, OVERLAY_MAX_HEIGHT - 60)
+        # Cap the results area at the available screen height (minus search bar
+        # + margins) so we show as many rows as physically fit, not the legacy
+        # OVERLAY_MAX_HEIGHT limit.
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail_h = screen.availableGeometry().height()
+        else:
+            avail_h = OVERLAY_MAX_HEIGHT
+        # ~90px reserved for search bar, margins, and screen edge padding
+        max_results_h = max(cfg.RESULT_ITEM_HEIGHT, avail_h - 90)
+        results_height = min(item_count * cfg.RESULT_ITEM_HEIGHT, max_results_h)
+        self._scroll.setMaximumHeight(max_results_h + 10)
         self._scroll.setFixedHeight(results_height + 10)
+        self.adjustSize()
+
+    def _apply_display_settings(self) -> None:
+        """Re-apply font sizes, row heights, and max_results without restart.
+
+        Called from App._on_config_changed() after _load_display_settings()
+        has mutated cfg.* values from the new settings.json.
+        """
+        # Grow widget pool if user increased cfg.MAX_RESULTS.
+        self._ensure_item_widgets(cfg.MAX_RESULTS)
+
+        # Update row heights on every pooled widget.
+        for w in self._item_widgets:
+            w.setFixedHeight(cfg.RESULT_ITEM_HEIGHT)
+
+        # Rebuild the search bar stylesheet with the new font size.
+        self._search.setStyleSheet(
+            f"QLineEdit {{ color: {TEXT_COLOR}; "
+            f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
+            f"border: none; border-bottom: 1px solid rgba(80,80,120,150); "
+            f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
+            f"padding: 12px 16px; font-size: {cfg.SEARCH_FONT_SIZE}px; }}"
+        )
+
+        # Re-run search so each visible ResultItem rebuilds its internal
+        # labels with the new cfg.*_FONT_SIZE values in set_command().
+        self._on_search_changed(self._search.text() or "")
         self.adjustSize()
 
     def _on_item_clicked(self, index: int) -> None:
         self._selected_index = index
         self._update_results_display()
         self._execute_selected()
+
+    def _on_item_mouse_press(self, idx: int, event: object) -> None:
+        """Dispatch a click on a result row: star toggles favorite, body executes."""
+        if idx >= len(self._results):
+            return
+        widget = self._item_widgets[idx]
+        cmd = self._results[idx]
+        # Star is a direct child of the row; geometry() is in row coords,
+        # matching event.pos() (which Qt delivers in the widget's coord system).
+        star_rect = widget.star_label.geometry()
+        try:
+            pos = event.pos()  # type: ignore[attr-defined]
+        except AttributeError:
+            pos = None
+        if pos is not None and star_rect.contains(pos):
+            # Built-in palette commands don't have a star — fall through to execute
+            if cmd.identifier.startswith("__") and cmd.identifier.endswith("__"):
+                self._on_item_clicked(idx)
+                return
+            new_state = self._usage.toggle_favorite(cmd.identifier)
+            logger.info("Favorite %s: %s", cmd.identifier, "on" if new_state else "off")
+            # Re-render so star icon updates and favorites reorder
+            self._on_search_changed(self._search.text() or "")
+            return
+        self._on_item_clicked(idx)
 
     def mouseReleaseEvent(self, event: object) -> None:
         """Detect mouse release for hold actions (momentary buttons + spring-loaded switches)."""
@@ -822,7 +956,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                 f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
                 f"border: none; border-bottom: 1px solid #ff4444; "
                 f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
-                f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+                f"padding: 12px 16px; font-size: {cfg.SEARCH_FONT_SIZE}px; }}"
             )
             self._search.setText("DCS-BIOS not connected - open Settings to install")
             self._search.setReadOnly(True)
@@ -849,7 +983,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                     f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
                     f"border: none; border-bottom: 1px solid #ff4444; "
                     f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
-                    f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+                    f"padding: 12px 16px; font-size: {cfg.SEARCH_FONT_SIZE}px; }}"
                 )
                 self._search.setText("No keybinding assigned for this command")
                 self._search.setReadOnly(True)
@@ -922,13 +1056,13 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         # Show "OLD → NEW" with highlight, then green confirmation, then hide
         label.setText(f"{old_state}  →  {new_state}")
         label.setStyleSheet(
-            "color: #ffcc00; font-size: 11px; font-weight: bold;"
+            f"color: #ffcc00; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
         )
 
         def _show_confirmed() -> None:
             label.setText(new_state)
             label.setStyleSheet(
-                "color: #44dd44; font-size: 11px; font-weight: bold;"
+                f"color: #44dd44; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
             )
 
         QTimer.singleShot(300, _show_confirmed)
@@ -950,7 +1084,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         # Show "PRESSED" with highlight
         label.setText("PRESSED")
         label.setStyleSheet(
-            "color: #ffcc00; font-size: 11px; font-weight: bold;"
+            f"color: #ffcc00; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
         )
 
         # After 500ms, if still held show HOLDING indicator (time-based)
@@ -958,7 +1092,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             if self._hold_active and time.time() - self._hold_press_time >= 0.5:
                 label.setText("HOLDING...")
                 label.setStyleSheet(
-                    "color: #ff8844; font-size: 11px; font-weight: bold;"
+                    f"color: #ff8844; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
                 )
 
         QTimer.singleShot(500, _check_still_held)
@@ -989,12 +1123,12 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             if genuinely_held:
                 label.setText("RELEASED")
                 label.setStyleSheet(
-                    "color: #aaaaaa; font-size: 11px; font-weight: bold;"
+                    f"color: #aaaaaa; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
                 )
             else:
                 label.setText("PRESSED")
                 label.setStyleSheet(
-                    "color: #44dd44; font-size: 11px; font-weight: bold;"
+                    f"color: #44dd44; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
                 )
 
         # Clean up hold state
@@ -1027,7 +1161,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                 f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
                 f"border: none; border-bottom: 1px solid #ff4444; "
                 f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
-                f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+                f"padding: 12px 16px; font-size: {cfg.SEARCH_FONT_SIZE}px; }}"
             )
             self._search.setText("DCS-BIOS not connected - open Settings to install")
             self._search.setReadOnly(True)
@@ -1072,9 +1206,9 @@ class CommandPalette(QWidget):  # type: ignore[misc]
                 if "◄" in btn.text():
                     btn.setText(btn.text().rstrip(" ◄") + " — HOLDING...")
                     btn.setStyleSheet(
-                        "QPushButton { color: #ff8844; background: rgba(60,80,40,200); "
-                        "border: 2px solid #ff8844; border-radius: 4px; "
-                        "padding: 8px 16px; text-align: left; font-size: 13px; font-weight: bold; }"
+                        f"QPushButton {{ color: #ff8844; background: rgba(60,80,40,200); "
+                        f"border: 2px solid #ff8844; border-radius: 4px; "
+                        f"padding: 8px 16px; text-align: left; font-size: {cfg.SUBMENU_BUTTON_FONT_SIZE}px; font-weight: bold; }}"
                     )
                     break
 
@@ -1117,6 +1251,30 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
     def eventFilter(self, obj: object, event: object) -> bool:
         """Intercept key events on child widgets (search bar, submenu buttons)."""
+        # Any mouse movement over the palette or its children restarts the
+        # auto-hide timer so the user has time to aim for the favorite star.
+        if hasattr(event, "type") and event.type() == QEvent.Type.MouseMove:  # type: ignore[attr-defined]
+            self._restart_inactivity_timer()
+            # Don't consume — let child widget handle normally
+            return False
+
+        # ── Submenu button Enter/Space: call click() synchronously ──
+        # QPushButton.animateClick() introduces a ~100ms delay between the
+        # physical key-press and the clicked() signal.  For spring-loaded
+        # switches this means the key-release arrives *before* _hold_active
+        # is set, so the hold never finishes.  By calling click() directly
+        # from the event filter we guarantee _hold_active is True before
+        # any release event can arrive.
+        if (isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyPress
+                and self._in_submenu and isinstance(obj, QPushButton)):
+            key = event.key()  # type: ignore[attr-defined]
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                if self._hold_active:
+                    return True  # consume during hold — don't re-execute
+                if not event.isAutoRepeat():  # type: ignore[attr-defined]
+                    obj.click()  # type: ignore[attr-defined]
+                return True  # consumed — prevent animateClick
+
         # Forward keyRelease to overlay during spring-loaded hold so release is detected
         if (isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyRelease
                 and self._hold_active and not event.isAutoRepeat()):
@@ -1199,17 +1357,11 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             return
 
         if key == Qt.Key.Key_Down:
-            if self._results:
-                self._selected_index = min(self._selected_index + 1, len(self._results) - 1)
-                self._update_results_display()
-                self._ensure_visible()
+            self.nav_select_down()
             return
 
         if key == Qt.Key.Key_Up:
-            if self._results:
-                self._selected_index = max(self._selected_index - 1, 0)
-                self._update_results_display()
-                self._ensure_visible()
+            self.nav_select_up()
             return
 
         # Tab/Shift+Tab also navigate results (like Down/Up)
@@ -1280,7 +1432,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             f"background-color: rgba({SEARCH_BG_COLOR[0]},{SEARCH_BG_COLOR[1]},{SEARCH_BG_COLOR[2]},{SEARCH_BG_COLOR[3]}); "
             f"border: none; border-bottom: 1px solid rgba(80,80,120,150); "
             f"border-top-left-radius: 10px; border-top-right-radius: 10px; "
-            f"padding: 12px 16px; font-size: {SEARCH_FONT_SIZE}px; }}"
+            f"padding: 12px 16px; font-size: {cfg.SEARCH_FONT_SIZE}px; }}"
         )
         self._search.setReadOnly(False)
         self._search.clear()
@@ -1290,6 +1442,65 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         if self._selected_index < len(self._item_widgets):
             widget = self._item_widgets[self._selected_index]
             self._scroll.ensureWidgetVisible(widget, 0, 10)
+
+    # ─── Navigation actions (public — driven by both keyboard events and
+    #     optional user-configured hotkeys / joystick bindings) ────────
+    def nav_select_up(self) -> None:
+        """Move selection up one row. Respects submenu vs main list."""
+        self._restart_inactivity_timer()
+        if self._in_submenu:
+            self._submenu_navigate(reverse=True)
+            return
+        if self._results:
+            self._selected_index = max(self._selected_index - 1, 0)
+            self._update_results_display()
+            self._ensure_visible()
+
+    def nav_select_down(self) -> None:
+        """Move selection down one row. Respects submenu vs main list."""
+        self._restart_inactivity_timer()
+        if self._in_submenu:
+            self._submenu_navigate(reverse=False)
+            return
+        if self._results:
+            self._selected_index = min(
+                self._selected_index + 1, len(self._results) - 1,
+            )
+            self._update_results_display()
+            self._ensure_visible()
+
+    def apply_keyboard_nav_bindings(self, up_combo: str, down_combo: str) -> None:
+        """Register user-configured keyboard shortcuts for up/down navigation.
+
+        Joystick bindings (strings starting with 'Joy') are ignored here —
+        those are polled by ``main.py`` instead.  Empty strings clear the
+        binding.  Re-invoking replaces any previously registered shortcuts.
+        """
+        # Tear down previous shortcuts
+        for sc in getattr(self, "_nav_shortcuts", []):
+            try:
+                sc.setParent(None)
+                sc.deleteLater()
+            except Exception:  # noqa: BLE001
+                pass
+        self._nav_shortcuts = []
+
+        from PyQt6.QtGui import QKeySequence, QShortcut  # type: ignore[import-untyped]
+
+        def _register(combo: str, action: object) -> None:
+            if not combo or combo.startswith("Joy"):
+                return
+            seq = QKeySequence(combo)
+            if seq.isEmpty():
+                return
+            sc = QShortcut(seq, self)
+            sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            sc.activated.connect(action)  # type: ignore[arg-type]
+            self._nav_shortcuts.append(sc)
+            logger.debug("Registered nav shortcut %r", combo)
+
+        _register(up_combo, self.nav_select_up)
+        _register(down_combo, self.nav_select_down)
 
     def focusOutEvent(self, event: object) -> None:
         QTimer.singleShot(100, self._check_focus)

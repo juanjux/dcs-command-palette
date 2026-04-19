@@ -41,6 +41,25 @@ class UsageTracker:
             return 1
         return max((int(e.get("count", 0)) for e in self._data.values()), default=1) or 1
 
+    def is_favorite(self, identifier: str) -> bool:
+        return bool(self._data.get(identifier, {}).get("favorite", False))
+
+    def set_favorite(self, identifier: str, value: bool) -> None:
+        entry = self._data.setdefault(identifier, {"count": 0, "last_used": 0.0})
+        if value:
+            entry["favorite"] = True
+        else:
+            entry.pop("favorite", None)
+        self._dirty = True
+        # Bypass the 5s throttle: favoriting is a rare deliberate click.
+        self._last_save = 0.0
+        self.save()
+
+    def toggle_favorite(self, identifier: str) -> bool:
+        new_val = not self.is_favorite(identifier)
+        self.set_favorite(identifier, new_val)
+        return new_val
+
     def save(self) -> None:
         if not self._dirty:
             return

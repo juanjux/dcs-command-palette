@@ -57,7 +57,10 @@ class Command:
         4. Description contains "Button"/"Pushbutton" but not "Switch"
         """
         if self.api_variant == "momentary_last_position":
-            return True
+            # Selectors with this variant are toggles (e.g. RWR_POWER_BTN),
+            # not pushbuttons — they remember state and should NOT get
+            # press+release treatment.
+            return self.control_type != "selector"
         if self.source != CommandSource.DCS_BIOS:
             return False
         if self.max_value is None or self.max_value > 1:

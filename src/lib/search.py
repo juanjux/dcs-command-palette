@@ -10,7 +10,6 @@ from rapidfuzz import fuzz, process
 from src.palette.commands import Command, CommandSource
 import src.config.settings as cfg
 from src.config.settings import (
-    MAX_RESULTS,
     PREFIX_MATCH_BONUS,
     RECENCY_DECAY_HOURS,
     WEIGHT_FREQUENCY,
@@ -52,15 +51,24 @@ def search(
     max_count = usage.max_count()
 
     if not query.strip():
-        scored: List[Tuple[float, Command]] = []
+        fav_scored: List[Tuple[float, Command]] = []
+        non_fav_scored: List[Tuple[float, Command]] = []
         for cmd in commands:
             freq = _frequency_score(usage.get_count(cmd.identifier), max_count)
             rec = _recency_score(usage.get_last_used(cmd.identifier))
             score = WEIGHT_FREQUENCY * freq + WEIGHT_RECENCY * rec
-            if score > 0:
-                scored.append((score, cmd))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [cmd for _, cmd in scored[:MAX_RESULTS]]
+            if usage.is_favorite(cmd.identifier):
+                # Sort favorites by last_used timestamp (most recent first).
+                # The blended score is frequency-dominated and puts rarely-used
+                # favorites at the bottom even when they were used seconds ago,
+                # which feels wrong.  Raw last_used is the most intuitive key.
+                fav_scored.append((usage.get_last_used(cmd.identifier), cmd))
+            elif score > 0:
+                non_fav_scored.append((score, cmd))
+        fav_scored.sort(key=lambda x: x[0], reverse=True)
+        non_fav_scored.sort(key=lambda x: x[0], reverse=True)
+        combined_empty = fav_scored + non_fav_scored
+        return [cmd for _, cmd in combined_empty[:cfg.MAX_RESULTS]]
 
     choices: Dict[int, str] = {i: cmd.search_text for i, cmd in enumerate(commands)}
 
@@ -68,7 +76,7 @@ def search(
         query.lower(),
         choices,
         scorer=fuzz.WRatio,
-        limit=MAX_RESULTS * 3,
+        limit=cfg.MAX_RESULTS * 3,
     )
 
     query_lower = query.lower()
@@ -116,5 +124,34 @@ def search(
 
         scored_results.append((final, cmd))
 
-    scored_results.sort(key=lambda x: x[0], reverse=True)
-    return [cmd for _, cmd in scored_results[:MAX_RESULTS]]
+    # Safety pass: ensure matching favorites are included even if they didn't
+    # rank high enough to land in the top MAX_RESULTS*3 fuzzy matches.
+    existing_ids = {cmd.identifier for _, cmd in scored_results}
+    for cmd in commands:
+        if cmd.identifier in existing_ids:
+            continue
+        if not usage.is_favorite(cmd.identifier):
+            continue
+        fuzzy_score = float(fuzz.WRatio(query_lower, cmd.search_text))
+        if fuzzy_score < 50:
+            continue
+        freq = _frequency_score(usage.get_count(cmd.identifier), max_count)
+        rec = _recency_score(usage.get_last_used(cmd.identifier))
+        final = (
+            WEIGHT_FUZZY * fuzzy_score
+            + WEIGHT_FREQUENCY * freq
+            + WEIGHT_RECENCY * rec
+        )
+        if cmd.identifier.lower().startswith(query_as_id):
+            final += PREFIX_MATCH_BONUS
+        if query_lower in cmd.search_text:
+            final += 12
+        scored_results.append((final, cmd))
+
+    # Partition: favorites first, then the rest — each sorted by score.
+    fav_results = [(s, c) for s, c in scored_results if usage.is_favorite(c.identifier)]
+    non_fav_results = [(s, c) for s, c in scored_results if not usage.is_favorite(c.identifier)]
+    fav_results.sort(key=lambda x: x[0], reverse=True)
+    non_fav_results.sort(key=lambda x: x[0], reverse=True)
+    combined = fav_results + non_fav_results
+    return [cmd for _, cmd in combined[:cfg.MAX_RESULTS]]

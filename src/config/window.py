@@ -21,7 +21,11 @@ from PyQt6.QtWidgets import (  # type: ignore[import-untyped]
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from src.bios.installer import (
@@ -94,6 +98,9 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._aircraft = current_aircraft
         self._on_aircraft_changed = on_aircraft_changed
         self._bios_connected = bios_connected
+        # Pending nav bindings — filled from settings in _populate()
+        self._pending_nav_up: str = ""
+        self._pending_nav_down: str = ""
         self._setup_window()
         self._build_ui()
         self._populate()
@@ -128,8 +135,34 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
             user32.AttachThreadInput(our_thread, fg_thread, False)
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        outer = QVBoxLayout(self)
+        outer.setSpacing(8)
+
+        tabs = QTabWidget()
+        outer.addWidget(tabs, stretch=1)
+
+        # Each tab is a scrollable area wrapping its own QVBoxLayout, so the
+        # content can grow without forcing the dialog to resize.
+        def _add_tab(title: str) -> QVBoxLayout:
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setSpacing(10)
+            page_layout.setContentsMargins(8, 8, 8, 8)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(page)
+            tabs.addTab(scroll, title)
+            return page_layout
+
+        general_layout = _add_tab("General")
+        shortcuts_layout = _add_tab("Shortcuts")
+        bios_layout_tab = _add_tab("DCS-BIOS")
+        about_layout = _add_tab("About")
+
+        # Use ``layout`` as an alias to the General tab for minimal diffs
+        # from the pre-tab code below.  Subsequent sections override it
+        # explicitly when they belong to a different tab.
+        layout = general_layout
 
         # --- DCS Install Directory ---
         dcs_group = QGroupBox("DCS World Installation")
@@ -208,6 +241,24 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         position_row.addStretch()
         display_layout.addLayout(position_row)
 
+        max_results_row = QHBoxLayout()
+        max_results_row.addWidget(QLabel("Maximum results shown:"))
+        self._max_results_spin = QSpinBox()
+        self._max_results_spin.setRange(3, 30)
+        self._max_results_spin.setMaximumWidth(80)
+        max_results_row.addWidget(self._max_results_spin)
+        max_results_row.addStretch()
+        display_layout.addLayout(max_results_row)
+
+        text_size_row = QHBoxLayout()
+        text_size_row.addWidget(QLabel("Text size:"))
+        self._text_size_combo = QComboBox()
+        self._text_size_combo.addItems(["tiny", "small", "normal", "big", "huge"])
+        self._text_size_combo.setMaximumWidth(120)
+        text_size_row.addWidget(self._text_size_combo)
+        text_size_row.addStretch()
+        display_layout.addLayout(text_size_row)
+
         layout.addWidget(display_group)
 
 
@@ -233,7 +284,53 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         reset_hotkey_btn.clicked.connect(self._reset_hotkey)
         hotkey_layout.addWidget(reset_hotkey_btn)
 
-        layout.addWidget(hotkey_group)
+        shortcuts_layout.addWidget(hotkey_group)
+
+        # --- Navigation shortcuts (additional bindings) ---
+        nav_group = QGroupBox("Navigation (additional bindings)")
+        nav_layout = QVBoxLayout(nav_group)
+        nav_hint = QLabel(
+            "These fire only while the palette is open and supplement the "
+            "Up/Down arrow keys. They accept a key combo or a joystick button."
+        )
+        nav_hint.setStyleSheet("color: gray; font-size: 11px;")
+        nav_hint.setWordWrap(True)
+        nav_layout.addWidget(nav_hint)
+
+        self._nav_up_label = QLabel()
+        self._nav_up_label.setStyleSheet(
+            "font-weight: bold; font-size: 13px; padding: 4px 8px; "
+            "background: rgba(50,50,70,200); border: 1px solid rgba(100,100,140,150); "
+            "border-radius: 4px; min-width: 120px;"
+        )
+        self._nav_up_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        up_row = QHBoxLayout()
+        up_row.addWidget(QLabel("Move up:"))
+        up_row.addWidget(self._nav_up_label, stretch=1)
+        self._set_nav_up_btn = QPushButton("Set Shortcut...")
+        self._set_nav_up_btn.clicked.connect(self._capture_nav_up)
+        up_row.addWidget(self._set_nav_up_btn)
+        clear_up_btn = QPushButton("Clear")
+        clear_up_btn.clicked.connect(self._clear_nav_up)
+        up_row.addWidget(clear_up_btn)
+        nav_layout.addLayout(up_row)
+
+        self._nav_down_label = QLabel()
+        self._nav_down_label.setStyleSheet(self._nav_up_label.styleSheet())
+        self._nav_down_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        down_row = QHBoxLayout()
+        down_row.addWidget(QLabel("Move down:"))
+        down_row.addWidget(self._nav_down_label, stretch=1)
+        self._set_nav_down_btn = QPushButton("Set Shortcut...")
+        self._set_nav_down_btn.clicked.connect(self._capture_nav_down)
+        down_row.addWidget(self._set_nav_down_btn)
+        clear_down_btn = QPushButton("Clear")
+        clear_down_btn.clicked.connect(self._clear_nav_down)
+        down_row.addWidget(clear_down_btn)
+        nav_layout.addLayout(down_row)
+
+        shortcuts_layout.addWidget(nav_group)
+        shortcuts_layout.addStretch()
 
 
         # --- Lua Hook ---
@@ -255,7 +352,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         hook_btn_row.addStretch()
         hook_layout.addLayout(hook_btn_row)
 
-        layout.addWidget(hook_group)
+        bios_layout_tab.addWidget(hook_group)
 
 
         # --- DCS-BIOS ---
@@ -291,7 +388,8 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         bios_btn_row.addStretch()
         bios_layout.addLayout(bios_btn_row)
 
-        layout.addWidget(bios_group)
+        bios_layout_tab.addWidget(bios_group)
+        bios_layout_tab.addStretch()
 
 
         # --- Info ---
@@ -315,10 +413,15 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._log_label.setStyleSheet("font-size: 11px;")
         info_layout.addWidget(self._log_label)
 
-        layout.addWidget(info_group)
+        about_layout.addWidget(info_group)
+        about_layout.addStretch()
 
 
-        # --- Buttons ---
+        # --- General tab — push content to top ---
+        general_layout.addStretch()
+
+
+        # --- Buttons (outside tabs) ---
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
@@ -330,7 +433,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
 
-        layout.addLayout(btn_row)
+        outer.addLayout(btn_row)
 
     def _populate(self) -> None:
         """Fill the UI with current values."""
@@ -347,8 +450,18 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         if pos_idx >= 0:
             self._position_combo.setCurrentIndex(pos_idx)
 
+        self._max_results_spin.setValue(int(settings.get("max_results", 12)))
+        ts_idx = self._text_size_combo.findText(str(settings.get("text_size", "normal")))
+        if ts_idx >= 0:
+            self._text_size_combo.setCurrentIndex(ts_idx)
+
         self._pending_hotkey = str(settings.get("hotkey", "Ctrl+Space"))
         self._hotkey_label.setText(self._pending_hotkey)
+
+        self._pending_nav_up = str(settings.get("hotkey_nav_up", ""))
+        self._pending_nav_down = str(settings.get("hotkey_nav_down", ""))
+        self._nav_up_label.setText(self._pending_nav_up or "(unbound)")
+        self._nav_down_label.setText(self._pending_nav_down or "(unbound)")
 
         # DCS-BIOS connection status
         self._update_bios_connection()
@@ -581,6 +694,28 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         self._pending_hotkey = "Ctrl+Space"
         self._hotkey_label.setText("Ctrl+Space")
 
+    # ── Navigation binding helpers ────────────────────────────
+    def _capture_nav(self, attr: str, label_widget: QLabel) -> None:
+        dialog = _HotkeyCaptureDialog(self)
+        if dialog.exec():
+            combo = dialog.captured_combo or ""
+            setattr(self, attr, combo)
+            label_widget.setText(combo or "(unbound)")
+
+    def _capture_nav_up(self) -> None:
+        self._capture_nav("_pending_nav_up", self._nav_up_label)
+
+    def _capture_nav_down(self) -> None:
+        self._capture_nav("_pending_nav_down", self._nav_down_label)
+
+    def _clear_nav_up(self) -> None:
+        self._pending_nav_up = ""
+        self._nav_up_label.setText("(unbound)")
+
+    def _clear_nav_down(self) -> None:
+        self._pending_nav_down = ""
+        self._nav_down_label.setText("(unbound)")
+
     def _apply_and_close(self) -> None:
         settings = _read_settings()
         settings["dcs_install_dir"] = self._dcs_dir
@@ -592,7 +727,11 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         except ValueError:
             settings["auto_hide_seconds"] = 5
         settings["hotkey"] = self._pending_hotkey
+        settings["hotkey_nav_up"] = self._pending_nav_up
+        settings["hotkey_nav_down"] = self._pending_nav_down
         settings["overlay_position"] = self._position_combo.currentText()
+        settings["max_results"] = self._max_results_spin.value()
+        settings["text_size"] = self._text_size_combo.currentText()
         settings["dcs_bios_host"] = self._bios_ip_edit.text().strip() or "127.0.0.1"
         try:
             settings["dcs_bios_port"] = int(self._bios_port_edit.text())
