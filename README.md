@@ -87,6 +87,34 @@ Open Settings from the palette (search "settings") or from the system tray icon 
 - **DCS install directory**: Auto-detected or manually selected on first run
 - **DCS-BIOS**: Connection status, IP/port configuration, install or update from Settings
 - **Lua Hook**: Install/update/uninstall the DCS hook from Settings
+- **VR (OpenKneeboard)**: Expose the palette as a web tab inside your VR headset — see below
+
+
+## VR mode (OpenKneeboard)
+
+The desktop palette overlay doesn't show up inside a VR headset because it's a
+regular Windows window. For VR users, the palette can instead run a small
+local HTTP server and render inside [OpenKneeboard](https://github.com/OpenKneeboard/OpenKneeboard)
+as a web page tab — fully usable via OpenKneeboard's cursor.
+
+**Setup**
+
+1. Install OpenKneeboard from its GitHub releases page. (Settings → VR → *Download OpenKneeboard…* opens the right URL.)
+2. Enable VR in DCS as usual. The palette detects `VR.enable = true` from your `options.lua` and starts the web server automatically (default mode: `auto`).
+3. In OpenKneeboard, add a new tab of type **Web Page** and paste the URL shown in Settings → VR (default `http://127.0.0.1:7788/`). Click *Copy URL* in Settings for a one-click copy.
+4. Switch to that tab while in VR — the palette appears in your headset. Type with OpenKneeboard's virtual keyboard or via your Quest keyboard overlay, click results with the OpenKneeboard cursor.
+
+**VR-specific settings** (Settings → VR)
+
+- **VR web server**: `auto` (start when DCS VR is enabled), `always` (always run), or `off`
+- **Port**: 7788 by default — change it if the port is taken
+- **Auto-start OpenKneeboard when DCS VR is enabled**: launches OpenKneeboard for you when it detects DCS going into VR mode (only if OpenKneeboard is installed)
+
+**Notes**
+
+- Favorites, usage tracking, and BIOS state are shared between the desktop and VR UIs — they read the same `usage_data.json` and connect to the same DCS-BIOS instance.
+- Spring-loaded switches (engine crank, HDG, CRS) work as "tap to engage, tap center to release" in the VR UI, since there's no mouse-hold equivalent with OpenKneeboard's cursor.
+- The server only binds to `127.0.0.1`, so it's never accessible from another machine.
 
 
 ## Reporting bugs

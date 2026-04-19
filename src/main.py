@@ -42,6 +42,8 @@ from src.detection import (
 )
 from src.lib.logging_setup import setup_logging
 from src.palette.usage import UsageTracker
+from src.vr.detection import VRStateWatcher, launch_openkneeboard
+from src.vr.server import VRServer
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,9 @@ class LowLevelKeyboardHook:
 
 class HotkeyBridge(QObject):  # type: ignore[misc]
     triggered = pyqtSignal()
+    # Fired by NavJoystickListener on a button edge. Payload is "up" or "down".
+    # Consumed on the Qt thread and dispatched to the palette.
+    nav_triggered = pyqtSignal(str)
 
 
 class UDPToggleListener:
@@ -231,6 +236,82 @@ class JoystickHotkeyListener:
 
     def stop(self) -> None:
         self._running = False
+
+
+class NavJoystickListener:
+    """Polls optional joystick bindings for palette navigation (up/down).
+
+    Each binding is a string in the same format accepted by the palette
+    toggle hotkey (``Joy<id>_Button<num>``); non-joystick or empty strings
+    are ignored.  Fires the given callback on each rising edge only while
+    ``is_active()`` returns True — so bindings don't eat joystick inputs
+    when the palette is hidden.
+    """
+
+    _JOY_RE = re.compile(r"^Joy(\d+)_Button(\d+)$")
+
+    def __init__(
+        self,
+        bindings: dict[str, str],
+        on_action: "callable",  # type: ignore[valid-type]
+        is_active: "callable",  # type: ignore[valid-type]
+    ) -> None:
+        # bindings: {"up": "Joy0_Button5", "down": ""}
+        self._entries: list[tuple[str, int, int]] = []
+        for action_name, combo in bindings.items():
+            if not combo:
+                continue
+            m = self._JOY_RE.match(combo)
+            if m:
+                self._entries.append(
+                    (action_name, int(m.group(1)), int(m.group(2))),
+                )
+        self._on_action = on_action
+        self._is_active = is_active
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def has_joystick_bindings(self) -> bool:
+        return bool(self._entries)
+
+    def start(self) -> bool:
+        if not self.has_joystick_bindings:
+            return False
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._poll_loop, name="NavJoystickListener", daemon=True,
+        )
+        self._thread.start()
+        logger.info(
+            "Nav joystick listener started for %d binding(s)",
+            len(self._entries),
+        )
+        return True
+
+    def stop(self) -> None:
+        self._running = False
+
+    def _poll_loop(self) -> None:
+        from src.lib.joystick import is_button_pressed
+
+        last_state: dict[tuple[int, int], bool] = {}
+        while self._running:
+            try:
+                for action_name, joy_id, button in self._entries:
+                    key = (joy_id, button)
+                    pressed = is_button_pressed(joy_id, button)
+                    was = last_state.get(key, False)
+                    if pressed and not was:
+                        try:
+                            if self._is_active():
+                                self._on_action(action_name)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("nav callback failed")
+                    last_state[key] = pressed
+            except Exception:  # noqa: BLE001
+                logger.exception("Nav joystick poll error")
+            time.sleep(0.05)
 
 
 def _ensure_dcs_install_dir(app: QApplication) -> Optional[str]:
@@ -553,6 +634,41 @@ class App:
         cfg.OVERLAY_POSITION = str(settings.get("overlay_position", "top-center"))
         cfg.DCS_BIOS_HOST = str(settings.get("dcs_bios_host", "127.0.0.1"))
         cfg.DCS_BIOS_PORT = int(settings.get("dcs_bios_port", 7778))
+        cfg.MAX_RESULTS = max(3, min(30, int(settings.get("max_results", 12))))
+
+        # VR / OpenKneeboard
+        mode = str(settings.get("vr_web_mode", "auto")).lower()
+        if mode not in ("auto", "always", "off"):
+            mode = "auto"
+        cfg.VR_WEB_MODE = mode
+        try:
+            cfg.VR_WEB_PORT = int(settings.get("vr_web_port", 7788))
+        except (TypeError, ValueError):
+            cfg.VR_WEB_PORT = 7788
+        cfg.VR_AUTOSTART_OPENKNEEBOARD = bool(
+            settings.get("vr_autostart_openkneeboard", False),
+        )
+
+        # Text size: scale base font constants by preset multiplier
+        _TEXT_SCALES = {
+            "tiny": 0.70, "small": 0.85, "normal": 1.0, "big": 1.2, "huge": 1.5,
+        }
+        _TEXT_BASE = {
+            "SEARCH_FONT_SIZE": 18,
+            "IDENTIFIER_FONT_SIZE": 14,
+            "DESCRIPTION_FONT_SIZE": 12,
+            "CATEGORY_FONT_SIZE": 11,
+            "COMBO_FONT_SIZE": 10,
+            "SUBMENU_BUTTON_FONT_SIZE": 13,
+            "SUBMENU_HEADER_FONT_SIZE": 12,
+            "STRING_INPUT_FONT_SIZE": 14,
+            "RESULT_ITEM_HEIGHT": 52,
+        }
+        text_size = str(settings.get("text_size", "normal"))
+        scale = _TEXT_SCALES.get(text_size, 1.0)
+        for name, base in _TEXT_BASE.items():
+            setattr(cfg, name, max(1, int(round(base * scale))))
+        cfg.TEXT_SIZE_PRESET = text_size
 
     def _load_commands(self) -> None:
         """Load (or reload) commands for the current aircraft."""
@@ -602,6 +718,10 @@ class App:
 
         # Hook palette commands
         self.palette.palette_command_triggered = self._on_palette_command  # type: ignore[attr-defined]
+
+        # Keep the VR server's command set in sync on aircraft reloads
+        if getattr(self, "_vr_server", None) is not None:
+            self._vr_server.update_commands(commands)
 
     def _on_palette_command(self, identifier: str) -> None:
         if identifier == "__CHANGE_AIRCRAFT__":
@@ -673,6 +793,44 @@ class App:
         # Open settings if user declined or no suggestion
         self._open_config()
 
+    def _apply_nav_bindings(self, settings: dict) -> None:
+        """Install optional up/down palette navigation bindings.
+
+        Each binding can be either a keyboard combo (e.g. ``Ctrl+J``) —
+        registered as a QShortcut on the palette — or a joystick button
+        (``Joy<id>_Button<num>``) — polled in a background thread.
+
+        Bindings only fire while the palette is visible so they don't eat
+        stick inputs during flight.
+        """
+        up = str(settings.get("hotkey_nav_up", ""))
+        down = str(settings.get("hotkey_nav_down", ""))
+
+        # Keyboard shortcuts — handled by Qt directly
+        if self.palette is not None:
+            self.palette.apply_keyboard_nav_bindings(up, down)
+
+        # Tear down any existing joystick listener
+        if self._nav_joy_listener is not None:
+            self._nav_joy_listener.stop()
+            self._nav_joy_listener = None
+
+        # Joystick polling — only if at least one is a joystick binding
+        def _on_action(name: str) -> None:
+            # Bridge back to the Qt thread via a queued signal
+            self._bridge.nav_triggered.emit(name)
+
+        def _is_active() -> bool:
+            return bool(self.palette is not None and self.palette.isVisible())
+
+        self._nav_joy_listener = NavJoystickListener(
+            bindings={"up": up, "down": down},
+            on_action=_on_action,
+            is_active=_is_active,
+        )
+        if self._nav_joy_listener.has_joystick_bindings:
+            self._nav_joy_listener.start()
+
     def _install_hotkey(self, hotkey: str) -> None:
         """Set up the hotkey listener (joystick or keyboard) for the given combo."""
         # Joystick hotkey listener (if hotkey is a joystick button)
@@ -724,6 +882,15 @@ class App:
         self.sender = DCSBiosSender(host=cfg.DCS_BIOS_HOST, port=cfg.DCS_BIOS_PORT)
         if self.palette:
             self.palette._sender = self.sender
+            # Live-reapply font sizes / result count / row heights
+            self.palette._apply_display_settings()
+        # Keep VR server in sync with the refreshed sender + re-check VR mode
+        if getattr(self, "_vr_server", None) is not None:
+            self._vr_server.update_sender(self.sender)
+        # Settings may have toggled VR mode — restart the VR subsystem if so
+        self._reapply_vr_settings()
+        # Apply (or reapply) navigation bindings — user may have changed them
+        self._apply_nav_bindings(_read_settings())
         changed = False
         if new_dcs_dir != self.dcs_dir:
             self.dcs_dir = new_dcs_dir
@@ -733,6 +900,76 @@ class App:
             changed = True
         if changed:
             self._load_commands()
+
+    # ─── VR / OpenKneeboard integration ────────────────────────────
+    def _setup_vr(self) -> None:
+        """Wire up the VR HTTP server based on cfg.VR_WEB_MODE."""
+        self._vr_watcher: Optional[VRStateWatcher] = None
+        self._vr_server: Optional[VRServer] = None
+        mode = cfg.VR_WEB_MODE
+        if mode == "off":
+            logger.info("VR web server disabled by settings")
+            return
+
+        commands = self.palette._commands if self.palette else []
+        self._vr_server = VRServer(
+            commands=commands,
+            usage=self.usage,
+            sender=self.sender,
+            state_reader=self.state_reader,
+            vr_active_fn=lambda: (
+                self._vr_watcher is not None
+                and bool(self._vr_watcher.current_state)
+            ),
+        )
+
+        if mode == "always":
+            self._vr_server.start(port=cfg.VR_WEB_PORT)
+            return
+
+        # mode == "auto" — poll options.lua and start/stop the server on flips
+        self._vr_watcher = VRStateWatcher(
+            on_vr_on=self._on_vr_enabled,
+            on_vr_off=self._on_vr_disabled,
+            interval=5.0,
+        )
+        self._vr_watcher.start()
+        # Force an immediate synchronous check so we don't wait 5s on startup
+        self._vr_watcher.force_check()
+
+    def _on_vr_enabled(self) -> None:
+        """Called from the VR watcher thread when DCS VR flips on."""
+        logger.info("DCS VR enabled — starting VR web server")
+        if self._vr_server is not None:
+            self._vr_server.start(port=cfg.VR_WEB_PORT)
+        if cfg.VR_AUTOSTART_OPENKNEEBOARD:
+            launch_openkneeboard()
+
+    def _on_vr_disabled(self) -> None:
+        """Called from the VR watcher thread when DCS VR flips off."""
+        logger.info("DCS VR disabled — stopping VR web server")
+        if self._vr_server is not None:
+            self._vr_server.stop()
+
+    def _reapply_vr_settings(self) -> None:
+        """Tear down and rebuild the VR subsystem after settings change.
+
+        Handles mode changes (off ↔ auto ↔ always) and port changes.
+        """
+        # Snapshot target config
+        mode = cfg.VR_WEB_MODE
+        port = cfg.VR_WEB_PORT
+
+        # Tear down existing watcher + server
+        if getattr(self, "_vr_watcher", None) is not None:
+            self._vr_watcher.stop()
+            self._vr_watcher = None
+        if getattr(self, "_vr_server", None) is not None:
+            self._vr_server.stop()
+            self._vr_server = None
+
+        # Rebuild from scratch — _setup_vr reads the latest cfg values
+        self._setup_vr()
 
     def _open_config(self) -> None:
         """Show the settings dialog."""
@@ -786,6 +1023,16 @@ class App:
 
         bridge.triggered.connect(toggle_palette)
 
+        def dispatch_nav(action: str) -> None:
+            if not self.palette or not self.palette.isVisible():
+                return
+            if action == "up":
+                self.palette.nav_select_up()
+            elif action == "down":
+                self.palette.nav_select_down()
+
+        bridge.nav_triggered.connect(dispatch_nav)
+
         # UDP toggle listener (for triggering from inside DCS via Lua hook)
         udp_listener = UDPToggleListener(
             PALETTE_LISTEN_PORT,
@@ -803,6 +1050,10 @@ class App:
         self._kb_hook: Optional[LowLevelKeyboardHook] = None
         self._configured_hotkey = configured_hotkey
         self._install_hotkey(configured_hotkey)
+
+        # Optional user-configured navigation bindings (up / down).
+        self._nav_joy_listener: Optional[NavJoystickListener] = None
+        self._apply_nav_bindings(settings)
 
         # System tray
         self._tray = tray = QSystemTrayIcon(_create_tray_icon())
@@ -848,15 +1099,24 @@ class App:
 
         QTimer.singleShot(2000, _preimport_config)
 
+        # Start the VR server (lazily — watcher may decide to keep it off)
+        self._setup_vr()
+
         logger.info("DCS Command Palette running. Press %s to open.", configured_hotkey)
 
         ret = self.qapp.exec()
 
         if self._joy_listener:
             self._joy_listener.stop()
+        if self._nav_joy_listener is not None:
+            self._nav_joy_listener.stop()
         if self._kb_hook:
             self._kb_hook.uninstall()
         udp_listener.stop()
+        if getattr(self, "_vr_watcher", None) is not None:
+            self._vr_watcher.stop()
+        if getattr(self, "_vr_server", None) is not None:
+            self._vr_server.stop()
         self._cleanup_shutdown_file()
         self.usage.save()
         self.state_reader.stop()

@@ -74,10 +74,17 @@ ACCENT_COLOR: str = "#4a9eff"
 IDENTIFIER_COLOR: str = "#ffffff"
 CATEGORY_COLOR: str = "#6a9fff"
 
-# Fonts
+# Fonts — base values, scaled at runtime by text_size setting
 SEARCH_FONT_SIZE: int = 18
 IDENTIFIER_FONT_SIZE: int = 14
 DESCRIPTION_FONT_SIZE: int = 12
+CATEGORY_FONT_SIZE: int = 11
+COMBO_FONT_SIZE: int = 10
+SUBMENU_BUTTON_FONT_SIZE: int = 13
+SUBMENU_HEADER_FONT_SIZE: int = 12
+STRING_INPUT_FONT_SIZE: int = 14
+RESULT_ITEM_HEIGHT: int = 52
+TEXT_SIZE_PRESET: str = "normal"  # tiny, small, normal, big, huge
 
 # Display options
 SHOW_IDENTIFIERS: bool = False  # Show DCS-BIOS identifiers below the description
@@ -88,6 +95,14 @@ AUTO_HIDE_SECONDS: int = 5  # Hide palette after N seconds of inactivity (0 = di
 # "left", "center", "right" (horizontal). Format: "vertical-horizontal"
 # e.g. "top-center", "center-left", "bottom-right"
 OVERLAY_POSITION: str = "top-center"
+
+# VR / OpenKneeboard web server
+# "auto"   — start server when DCS VR.enable=true, stop when false
+# "always" — always run the server
+# "off"    — never start
+VR_WEB_MODE: str = "auto"
+VR_WEB_PORT: int = 7788
+VR_AUTOSTART_OPENKNEEBOARD: bool = False  # launch OpenKneeboard when VR goes on
 
 # Search ranking weights
 WEIGHT_FUZZY: float = 0.60

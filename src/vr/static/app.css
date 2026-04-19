@@ -1,0 +1,282 @@
+/* DCS Command Palette — web UI for OpenKneeboard
+ *
+ * Designed for a kneeboard-sized viewport (~1024x768). Font sizes are
+ * generous so labels stay readable at arm's length in VR. Colours mirror
+ * the desktop palette. */
+
+:root {
+  --bg: #14141e;
+  --bg-search: #28283b;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4a9eff;
+  --accent-dim: rgba(60, 120, 220, 0.4);
+  --border: rgba(100, 100, 140, 0.4);
+  --fav: #ffcc33;
+  --fav-off: #666;
+  --green: #44dd44;
+  --orange: #ff8844;
+  --red: #ff6666;
+  --row-height: 64px;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  height: 100%;
+  overflow: hidden;
+}
+
+#shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Header ────────────────────────────────────────── */
+#header {
+  display: flex;
+  align-items: center;
+  background: var(--bg-search);
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+}
+
+#search {
+  flex: 1;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  outline: none;
+  font-size: 22px;
+  padding: 14px 8px;
+}
+#search::placeholder { color: var(--muted); }
+
+#status { padding: 0 8px; }
+.dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.dot-on  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot-off { background: #555; }
+
+/* ── Results list ──────────────────────────────────── */
+#results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  min-height: var(--row-height);
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  gap: 12px;
+}
+.row:hover { background: var(--accent-dim); }
+.row.selected { background: rgba(60, 120, 220, 0.25); }
+
+.row-main {
+  flex: 1;
+  min-width: 0;  /* allow text truncation */
+}
+.row-desc {
+  font-size: 18px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-meta .combo {
+  color: var(--accent);
+  font-family: Consolas, monospace;
+}
+
+.star {
+  font-size: 24px;
+  line-height: 1;
+  width: 32px;
+  text-align: center;
+  color: var(--fav-off);
+  user-select: none;
+  flex: 0 0 auto;
+}
+.star.on { color: var(--fav); }
+
+/* ── Inline submenu (positions, inc/dec, string input) ── */
+.submenu {
+  background: rgba(40, 40, 60, 0.8);
+  padding: 8px 16px 12px 48px;  /* indent under the row */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.submenu button {
+  background: rgba(50, 50, 70, 0.8);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 16px;
+  min-width: 80px;
+  cursor: pointer;
+}
+.submenu button:hover { background: rgba(60, 120, 220, 0.6); }
+.submenu button.current {
+  background: rgba(60, 120, 220, 0.6);
+  border-color: var(--accent);
+  font-weight: bold;
+}
+.submenu button.danger {
+  background: rgba(100, 40, 40, 0.7);
+  border-color: #a66;
+}
+.submenu button.holding {
+  background: rgba(80, 60, 20, 0.9);
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.submenu input[type="text"] {
+  flex: 1 1 200px;
+  min-width: 200px;
+  background: rgba(50, 50, 70, 0.8);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 16px;
+  outline: none;
+}
+.submenu input[type="text"]:focus { border-color: var(--accent); }
+
+.submenu-hint {
+  font-size: 12px;
+  color: var(--muted);
+  flex-basis: 100%;
+}
+
+/* ── Toast notifications ───────────────────────────── */
+#toast {
+  position: fixed;
+  bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(40, 40, 60, 0.95);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+#toast.hidden { opacity: 0; }
+#toast.ok { border-color: var(--green); }
+#toast.err { border-color: var(--red); color: var(--red); }
+
+/* ── Empty state ──────────────────────────────────── */
+.empty {
+  padding: 32px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 16px;
+}
+
+/* ── State badge (row feedback after toggle / press) ── */
+.row { position: relative; }
+.state-badge {
+  position: absolute;
+  right: 52px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.9);
+  background: rgba(20, 20, 30, 0.92);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 14px;
+  font-weight: bold;
+  font-family: Consolas, monospace;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  white-space: nowrap;
+}
+.state-badge.show {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+.state-badge.ok  { border-color: var(--green); color: var(--green); }
+.state-badge.err { border-color: var(--red);   color: var(--red);   }
+
+/* ── Header buttons (keyboard toggle, clear) ────────── */
+.hdr-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 40px;
+  height: 36px;
+  font-size: 18px;
+  margin: 0 4px;
+  cursor: pointer;
+}
+.hdr-btn:hover { background: rgba(60, 120, 220, 0.3); color: var(--text); }
+.hdr-btn.active {
+  background: rgba(60, 120, 220, 0.5);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ── Virtual keyboard ───────────────────────────────── */
+#keyboard {
+  background: rgba(25, 25, 40, 0.92);
+  border-top: 1px solid var(--border);
+  padding: 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  user-select: none;
+}
+#keyboard.hidden { display: none; }
+.kb-row {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+.kb-key {
+  flex: 1 0 auto;
+  min-width: 48px;
+  max-width: 80px;
+  height: 48px;
+  font-size: 18px;
+  background: rgba(50, 50, 70, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.kb-key:hover   { background: rgba(60, 120, 220, 0.5); }
+.kb-key:active  { background: rgba(60, 120, 220, 0.8); }
+.kb-wide        { max-width: 200px; min-width: 120px; }
+.kb-back        { max-width: 140px; }

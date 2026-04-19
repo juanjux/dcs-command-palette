@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DCS Command Palette</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div id="shell">
+    <div id="header">
+      <input id="search" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Search cockpit controls & shortcuts…">
+      <button id="kbd-toggle" class="hdr-btn" title="Toggle virtual keyboard">⌨</button>
+      <button id="clear-btn" class="hdr-btn" title="Clear search">✕</button>
+      <div id="status">
+        <span id="bios-dot" class="dot dot-off" title="DCS-BIOS disconnected"></span>
+      </div>
+    </div>
+    <div id="results"></div>
+    <div id="keyboard" class="hidden"></div>
+    <div id="toast" class="hidden"></div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
