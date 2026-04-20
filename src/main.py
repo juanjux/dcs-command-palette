@@ -290,23 +290,48 @@ class NavJoystickListener:
     def stop(self) -> None:
         self._running = False
 
+    # Key-repeat timing — matches Windows default "slow" for arrow keys.
+    # Initial delay before the first repeat; then fire every REPEAT_INTERVAL
+    # until the button is released.  12 Hz feels natural for list nav.
+    _INITIAL_DELAY = 0.4
+    _REPEAT_INTERVAL = 0.08
+
     def _poll_loop(self) -> None:
         from src.lib.joystick import is_button_pressed
 
-        last_state: dict[tuple[int, int], bool] = {}
+        # Per-button state: (currently_pressed, first_press_time, last_fire_time)
+        state: dict[tuple[int, int], tuple[bool, float, float]] = {}
+
+        def _fire(action_name: str) -> None:
+            try:
+                if self._is_active():
+                    self._on_action(action_name)
+            except Exception:  # noqa: BLE001
+                logger.exception("nav callback failed")
+
         while self._running:
             try:
+                now = time.time()
                 for action_name, joy_id, button in self._entries:
                     key = (joy_id, button)
                     pressed = is_button_pressed(joy_id, button)
-                    was = last_state.get(key, False)
-                    if pressed and not was:
-                        try:
-                            if self._is_active():
-                                self._on_action(action_name)
-                        except Exception:  # noqa: BLE001
-                            logger.exception("nav callback failed")
-                    last_state[key] = pressed
+                    was_pressed, first_press, last_fire = state.get(
+                        key, (False, 0.0, 0.0),
+                    )
+                    if pressed and not was_pressed:
+                        # Initial press edge — fire once.
+                        _fire(action_name)
+                        state[key] = (True, now, now)
+                    elif pressed and was_pressed:
+                        # Button held — fire again if we're past the initial
+                        # delay and enough time has passed since the last fire.
+                        if (now - first_press >= self._INITIAL_DELAY
+                                and now - last_fire >= self._REPEAT_INTERVAL):
+                            _fire(action_name)
+                            state[key] = (True, first_press, now)
+                    elif not pressed and was_pressed:
+                        # Released — clear state so next press restarts timing.
+                        state[key] = (False, 0.0, 0.0)
             except Exception:  # noqa: BLE001
                 logger.exception("Nav joystick poll error")
             time.sleep(0.05)
