@@ -253,8 +253,11 @@ class NavJoystickListener:
         bindings: dict[str, str],
         on_action: "callable",  # type: ignore[valid-type]
         is_active: "callable",  # type: ignore[valid-type]
+        repeat_actions: Optional[set] = None,
     ) -> None:
-        # bindings: {"up": "Joy0_Button5", "down": ""}
+        # bindings: {"up": "Joy0_Button5", "down": "", "activate": "Joy0_Button7"}
+        # repeat_actions: names that auto-repeat while held (e.g. {"up","down"}).
+        # Actions not in this set fire once per press edge.
         self._entries: list[tuple[str, int, int]] = []
         for action_name, combo in bindings.items():
             if not combo:
@@ -266,6 +269,7 @@ class NavJoystickListener:
                 )
         self._on_action = on_action
         self._is_active = is_active
+        self._repeat_actions: set = set(repeat_actions or ())
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -323,9 +327,10 @@ class NavJoystickListener:
                         _fire(action_name)
                         state[key] = (True, now, now)
                     elif pressed and was_pressed:
-                        # Button held — fire again if we're past the initial
-                        # delay and enough time has passed since the last fire.
-                        if (now - first_press >= self._INITIAL_DELAY
+                        # Button held — only repeat if this action opted in.
+                        # Activate / select shouldn't auto-fire.
+                        if (action_name in self._repeat_actions
+                                and now - first_press >= self._INITIAL_DELAY
                                 and now - last_fire >= self._REPEAT_INTERVAL):
                             _fire(action_name)
                             state[key] = (True, first_press, now)
@@ -800,21 +805,23 @@ class App:
         self._open_config()
 
     def _apply_nav_bindings(self, settings: dict) -> None:
-        """Install optional up/down palette navigation bindings.
+        """Install optional palette navigation bindings (up / down / activate).
 
         Each binding can be either a keyboard combo (e.g. ``Ctrl+J``) —
         registered as a QShortcut on the palette — or a joystick button
         (``Joy<id>_Button<num>``) — polled in a background thread.
 
         Bindings only fire while the palette is visible so they don't eat
-        stick inputs during flight.
+        stick inputs during flight.  Up/Down auto-repeat while held;
+        Activate fires once per press edge.
         """
         up = str(settings.get("hotkey_nav_up", ""))
         down = str(settings.get("hotkey_nav_down", ""))
+        activate = str(settings.get("hotkey_nav_activate", ""))
 
         # Keyboard shortcuts — handled by Qt directly
         if self.palette is not None:
-            self.palette.apply_keyboard_nav_bindings(up, down)
+            self.palette.apply_keyboard_nav_bindings(up, down, activate)
 
         # Tear down any existing joystick listener
         if self._nav_joy_listener is not None:
@@ -830,9 +837,10 @@ class App:
             return bool(self.palette is not None and self.palette.isVisible())
 
         self._nav_joy_listener = NavJoystickListener(
-            bindings={"up": up, "down": down},
+            bindings={"up": up, "down": down, "activate": activate},
             on_action=_on_action,
             is_active=_is_active,
+            repeat_actions={"up", "down"},  # activate doesn't auto-repeat
         )
         if self._nav_joy_listener.has_joystick_bindings:
             self._nav_joy_listener.start()
@@ -961,6 +969,8 @@ class App:
                 self.palette.nav_select_up()
             elif action == "down":
                 self.palette.nav_select_down()
+            elif action == "activate":
+                self.palette.nav_activate()
 
         bridge.nav_triggered.connect(dispatch_nav)
 

@@ -101,6 +101,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         # Pending nav bindings — filled from settings in _populate()
         self._pending_nav_up: str = ""
         self._pending_nav_down: str = ""
+        self._pending_nav_activate: str = ""
         self._setup_window()
         self._build_ui()
         self._populate()
@@ -329,6 +330,20 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         down_row.addWidget(clear_down_btn)
         nav_layout.addLayout(down_row)
 
+        self._nav_activate_label = QLabel()
+        self._nav_activate_label.setStyleSheet(self._nav_up_label.styleSheet())
+        self._nav_activate_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        activate_row = QHBoxLayout()
+        activate_row.addWidget(QLabel("Activate item:"))
+        activate_row.addWidget(self._nav_activate_label, stretch=1)
+        self._set_nav_activate_btn = QPushButton("Set Shortcut...")
+        self._set_nav_activate_btn.clicked.connect(self._capture_nav_activate)
+        activate_row.addWidget(self._set_nav_activate_btn)
+        clear_activate_btn = QPushButton("Clear")
+        clear_activate_btn.clicked.connect(self._clear_nav_activate)
+        activate_row.addWidget(clear_activate_btn)
+        nav_layout.addLayout(activate_row)
+
         shortcuts_layout.addWidget(nav_group)
         shortcuts_layout.addStretch()
 
@@ -460,8 +475,10 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
 
         self._pending_nav_up = str(settings.get("hotkey_nav_up", ""))
         self._pending_nav_down = str(settings.get("hotkey_nav_down", ""))
+        self._pending_nav_activate = str(settings.get("hotkey_nav_activate", ""))
         self._nav_up_label.setText(self._pending_nav_up or "(unbound)")
         self._nav_down_label.setText(self._pending_nav_down or "(unbound)")
+        self._nav_activate_label.setText(self._pending_nav_activate or "(unbound)")
 
         # DCS-BIOS connection status
         self._update_bios_connection()
@@ -708,6 +725,9 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
     def _capture_nav_down(self) -> None:
         self._capture_nav("_pending_nav_down", self._nav_down_label)
 
+    def _capture_nav_activate(self) -> None:
+        self._capture_nav("_pending_nav_activate", self._nav_activate_label)
+
     def _clear_nav_up(self) -> None:
         self._pending_nav_up = ""
         self._nav_up_label.setText("(unbound)")
@@ -715,6 +735,10 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
     def _clear_nav_down(self) -> None:
         self._pending_nav_down = ""
         self._nav_down_label.setText("(unbound)")
+
+    def _clear_nav_activate(self) -> None:
+        self._pending_nav_activate = ""
+        self._nav_activate_label.setText("(unbound)")
 
     def _apply_and_close(self) -> None:
         settings = _read_settings()
@@ -729,6 +753,7 @@ class ConfigWindow(QDialog):  # type: ignore[misc]
         settings["hotkey"] = self._pending_hotkey
         settings["hotkey_nav_up"] = self._pending_nav_up
         settings["hotkey_nav_down"] = self._pending_nav_down
+        settings["hotkey_nav_activate"] = self._pending_nav_activate
         settings["overlay_position"] = self._position_combo.currentText()
         settings["max_results"] = self._max_results_spin.value()
         settings["text_size"] = self._text_size_combo.currentText()

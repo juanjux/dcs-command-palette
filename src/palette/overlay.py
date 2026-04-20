@@ -1469,7 +1469,31 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             self._update_results_display()
             self._ensure_visible()
 
-    def apply_keyboard_nav_bindings(self, up_combo: str, down_combo: str) -> None:
+    def nav_activate(self) -> None:
+        """Execute the currently selected item.
+
+        Mirrors Enter behaviour: in a submenu, clicks the focused button;
+        in the main list, executes the highlighted command.  No-op during
+        a hold (so we don't re-fire while a spring-loaded switch is held).
+        """
+        self._restart_inactivity_timer()
+        if self._hold_active:
+            return
+        if self._in_submenu:
+            focused = QApplication.focusWidget()
+            if isinstance(focused, QPushButton):
+                focused.click()
+            return
+        # Main list — share the same cooldown guard as Enter-handling in
+        # keyPressEvent to avoid double-fires during the action animation.
+        now = time.time()
+        if now - self._action_cooldown < 0.5:
+            return
+        self._execute_selected()
+
+    def apply_keyboard_nav_bindings(
+        self, up_combo: str, down_combo: str, activate_combo: str = "",
+    ) -> None:
         """Register user-configured keyboard shortcuts for up/down navigation.
 
         Joystick bindings (strings starting with 'Joy') are ignored here —
@@ -1501,6 +1525,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         _register(up_combo, self.nav_select_up)
         _register(down_combo, self.nav_select_down)
+        _register(activate_combo, self.nav_activate)
 
     def focusOutEvent(self, event: object) -> None:
         QTimer.singleShot(100, self._check_focus)
