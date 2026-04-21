@@ -130,9 +130,10 @@ class LowLevelKeyboardHook:
 
 class HotkeyBridge(QObject):  # type: ignore[misc]
     triggered = pyqtSignal()
-    # Fired by NavJoystickListener on a button edge. Payload is "up" or "down".
+    # Fired by NavJoystickListener on a button edge.
+    # Args: action_name ("up" | "down" | "activate"), is_press (True | False)
     # Consumed on the Qt thread and dispatched to the palette.
-    nav_triggered = pyqtSignal(str)
+    nav_triggered = pyqtSignal(str, bool)
 
 
 class UDPToggleListener:
@@ -306,10 +307,10 @@ class NavJoystickListener:
         # Per-button state: (currently_pressed, first_press_time, last_fire_time)
         state: dict[tuple[int, int], tuple[bool, float, float]] = {}
 
-        def _fire(action_name: str) -> None:
+        def _fire(action_name: str, is_press: bool) -> None:
             try:
                 if self._is_active():
-                    self._on_action(action_name)
+                    self._on_action(action_name, is_press)
             except Exception:  # noqa: BLE001
                 logger.exception("nav callback failed")
 
@@ -324,7 +325,7 @@ class NavJoystickListener:
                     )
                     if pressed and not was_pressed:
                         # Initial press edge — fire once.
-                        _fire(action_name)
+                        _fire(action_name, True)
                         state[key] = (True, now, now)
                     elif pressed and was_pressed:
                         # Button held — only repeat if this action opted in.
@@ -332,10 +333,12 @@ class NavJoystickListener:
                         if (action_name in self._repeat_actions
                                 and now - first_press >= self._INITIAL_DELAY
                                 and now - last_fire >= self._REPEAT_INTERVAL):
-                            _fire(action_name)
+                            _fire(action_name, True)
                             state[key] = (True, first_press, now)
                     elif not pressed and was_pressed:
-                        # Released — clear state so next press restarts timing.
+                        # Release edge — fire so the palette can finish any
+                        # hold state (momentary release / spring-loaded recenter).
+                        _fire(action_name, False)
                         state[key] = (False, 0.0, 0.0)
             except Exception:  # noqa: BLE001
                 logger.exception("Nav joystick poll error")
@@ -829,9 +832,9 @@ class App:
             self._nav_joy_listener = None
 
         # Joystick polling — only if at least one is a joystick binding
-        def _on_action(name: str) -> None:
+        def _on_action(name: str, is_press: bool) -> None:
             # Bridge back to the Qt thread via a queued signal
-            self._bridge.nav_triggered.emit(name)
+            self._bridge.nav_triggered.emit(name, is_press)
 
         def _is_active() -> bool:
             return bool(self.palette is not None and self.palette.isVisible())
@@ -962,9 +965,15 @@ class App:
 
         bridge.triggered.connect(toggle_palette)
 
-        def dispatch_nav(action: str) -> None:
+        def dispatch_nav(action: str, is_press: bool) -> None:
             if not self.palette or not self.palette.isVisible():
                 return
+            if not is_press:
+                # Release edge — only Activate cares (to end a hold).
+                if action == "activate":
+                    self.palette.nav_deactivate()
+                return
+            # Press edge
             if action == "up":
                 self.palette.nav_select_up()
             elif action == "down":

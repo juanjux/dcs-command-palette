@@ -1470,9 +1470,9 @@ class CommandPalette(QWidget):  # type: ignore[misc]
             self._ensure_visible()
 
     def nav_activate(self) -> None:
-        """Execute the currently selected item.
+        """Execute the currently selected item (press edge).
 
-        Mirrors Enter behaviour: in a submenu, clicks the focused button;
+        Mirrors Enter press: in a submenu, clicks the focused button;
         in the main list, executes the highlighted command.  No-op during
         a hold (so we don't re-fire while a spring-loaded switch is held).
         """
@@ -1490,6 +1490,23 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         if now - self._action_cooldown < 0.5:
             return
         self._execute_selected()
+
+    def nav_deactivate(self) -> None:
+        """Complete any hold started via nav_activate (release edge).
+
+        Mirrors Enter release: if a momentary hold or spring-loaded hold
+        is active, run the appropriate finish handler (set_state(0) for
+        momentary, recenter for spring-loaded).  Lets HOTAS users control
+        the hold duration — press+hold the bound button = DCS button
+        held; release = DCS button released.
+        """
+        self._restart_inactivity_timer()
+        if not self._hold_active:
+            return
+        if getattr(self, "_spring_hold_identifier", None):
+            self._finish_spring_hold()
+        else:
+            self._finish_hold()
 
     def apply_keyboard_nav_bindings(
         self, up_combo: str, down_combo: str, activate_combo: str = "",
@@ -1511,8 +1528,21 @@ class CommandPalette(QWidget):  # type: ignore[misc]
 
         from PyQt6.QtGui import QKeySequence, QShortcut  # type: ignore[import-untyped]
 
+        # Keys already handled natively by keyPressEvent / eventFilter; we
+        # must not register a QShortcut for them because QShortcut grabs
+        # the KeyPress in the event chain before our handlers can see it,
+        # which breaks hold detection (no matching KeyRelease).
+        _RESERVED = {"Return", "Enter", "Space", "Escape", "Tab", "Backtab",
+                     "Up", "Down"}
+
         def _register(combo: str, action: object) -> None:
             if not combo or combo.startswith("Joy"):
+                return
+            if combo.strip() in _RESERVED:
+                logger.info(
+                    "Ignoring nav binding %r — that key is already handled "
+                    "by the palette natively.", combo,
+                )
                 return
             seq = QKeySequence(combo)
             if seq.isEmpty():
