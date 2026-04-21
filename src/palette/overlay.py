@@ -537,6 +537,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._hold_threshold: float = 0.6  # seconds — visual "HOLDING" indicator delay
         self._action_cooldown: float = 0.0  # blocks re-execution during visual feedback
         self._spring_hold_identifier: Optional[str] = None  # spring-loaded switch identifier
+        self._hold_refresh_timer: Optional[QTimer] = None  # repainter for PRESSED/HOLDING label
 
         self._setup_window()
         self._build_ui()
@@ -805,6 +806,7 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         self._hold_cmd = None
         self._hold_original_value = None
         self._spring_hold_identifier = None
+        self._stop_hold_refresh_timer()
 
         self._fade_anim.stop()
         self._fade_anim.setDuration(80)
@@ -1071,34 +1073,64 @@ class CommandPalette(QWidget):  # type: ignore[misc]
     def _animate_momentary_press(self, cmd: Command) -> None:
         """Show press animation for a momentary pushbutton.
 
-        Shows "PRESSED" immediately.  After 1 second (if still held),
-        transitions to "HOLDING...".  Release is handled by _finish_hold.
+        Shows "PRESSED" initially.  After 500ms (if still held), transitions
+        to "HOLDING...".  A recurring timer re-applies the label every 150ms
+        for as long as the hold lasts, so mid-hold re-renders (BIOS status
+        check, debounced search) can't wipe the indicator.  Release is
+        handled by _finish_hold, which stops the timer.
         """
         if self._selected_index >= len(self._item_widgets):
-            self._finish_hold(was_held=False)
+            self._finish_hold(_was_held=False)
             return
 
         widget = self._item_widgets[self._selected_index]
         label = widget.combo_label
 
-        # Show "PRESSED" with highlight
-        label.setText("PRESSED")
-        label.setStyleSheet(
-            f"color: #ffcc00; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
-        )
+        # Kill any previous refresh timer (shouldn't exist, but defensive).
+        self._stop_hold_refresh_timer()
 
-        # After 500ms, if still held show HOLDING indicator (time-based)
-        def _check_still_held() -> None:
-            if self._hold_active and time.time() - self._hold_press_time >= 0.5:
+        def _refresh() -> None:
+            if not self._hold_active or not self._hold_is_momentary:
+                return
+            if time.time() - self._hold_press_time >= 0.5:
                 label.setText("HOLDING...")
                 label.setStyleSheet(
-                    f"color: #ff8844; font-size: {cfg.COMBO_FONT_SIZE}px; font-weight: bold;"
+                    f"color: #ff8844; font-size: {cfg.COMBO_FONT_SIZE}px; "
+                    f"font-weight: bold;"
+                )
+            else:
+                label.setText("PRESSED")
+                label.setStyleSheet(
+                    f"color: #ffcc00; font-size: {cfg.COMBO_FONT_SIZE}px; "
+                    f"font-weight: bold;"
                 )
 
-        QTimer.singleShot(500, _check_still_held)
+        _refresh()  # initial paint
+
+        # Recurring re-apply — 150ms is fast enough to not visibly flicker
+        # against re-renders but slow enough to be cheap.
+        timer = QTimer(self)
+        timer.setInterval(150)
+        timer.timeout.connect(_refresh)
+        timer.start()
+        self._hold_refresh_timer = timer
+
+    def _stop_hold_refresh_timer(self) -> None:
+        timer = getattr(self, "_hold_refresh_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+                timer.deleteLater()
+            except Exception:  # noqa: BLE001
+                pass
+            self._hold_refresh_timer = None
 
     def _finish_hold(self, _was_held: bool = False) -> None:
         """Complete a momentary hold: always release the button (set_state 0)."""
+        # Stop the PRESSED/HOLDING refresh timer first so it can't overwrite
+        # the RELEASED/PRESSED feedback we're about to paint below.
+        self._stop_hold_refresh_timer()
+
         cmd = self._hold_cmd
         elapsed = time.time() - self._hold_press_time
         genuinely_held = elapsed >= 0.5  # match the visual threshold
