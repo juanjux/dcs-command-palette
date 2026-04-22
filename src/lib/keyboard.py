@@ -35,19 +35,31 @@ class KeyboardEntry:
     value_down: Optional[float] = None  # DCS value_down for position mapping
 
 
-# Regex to extract command entries from Lua files
+# Regex to extract command entries from Lua files.
+#
+# The key/name/category strings use ``'((?:[^'\\]|\\.)+)'`` instead of the
+# simpler ``'([^']+)'`` so entries with Lua-escaped single quotes — notably
+# ``key = '\''`` (the ``'`` key in "Rearming and Refueling Window") —
+# still parse.  Without this the combos block fails to close and the outer
+# ``[^}]*?`` can't reach ``name`` across the nested ``}}}``, so the whole
+# entry is silently dropped.
 _ENTRY_RE = re.compile(
     r"\{[^}]*?"
-    r"(?:combos\s*=\s*\{\{key\s*=\s*'([^']+)'"  # group 1: key
+    r"(?:combos\s*=\s*\{\{key\s*=\s*'((?:[^'\\]|\\.)+)'"  # group 1: key
     r"(?:,\s*reformers\s*=\s*\{([^}]*)\})?"  # group 2: reformers (optional)
     r"\}\})?"  # close combos
     r"[^}]*?"
-    r"name\s*=\s*_\('([^']+)'\)"  # group 3: name
+    r"name\s*=\s*_\('((?:[^'\\]|\\.)+)'\)"  # group 3: name
     r"[^}]*?"
-    r"category\s*=\s*(?:_\('([^']+)'\)|\{_\('([^']+)'\))"  # group 4 or 5: category
+    r"category\s*=\s*(?:_\('((?:[^'\\]|\\.)+)'\)|\{_\('((?:[^'\\]|\\.)+)'\))"  # group 4/5: category
     r"[^}]*?\}",
     re.DOTALL,
 )
+
+
+def _unescape_lua_string(s: str) -> str:
+    """Undo Lua single-quoted string escapes we care about."""
+    return s.replace(r"\'", "'").replace(r"\\", "\\")
 
 
 def _parse_reformers(reformers_str: str) -> List[str]:
@@ -67,10 +79,10 @@ def parse_lua_commands(lua_content: str) -> List[KeyboardEntry]:
     results: List[KeyboardEntry] = []
 
     for m in _ENTRY_RE.finditer(lua_content):
-        key = m.group(1) or ""
+        key = _unescape_lua_string(m.group(1) or "")
         reformers_raw = m.group(2) or ""
-        name = m.group(3)
-        category = m.group(4) or m.group(5) or ""
+        name = _unescape_lua_string(m.group(3))
+        category = _unescape_lua_string(m.group(4) or m.group(5) or "")
 
         reformers = _parse_reformers(reformers_raw) if reformers_raw else []
         combo = _build_combo_string(key, reformers) if key else ""
