@@ -488,24 +488,39 @@ class App:
             logger.error("No DCS installation directory. Exiting.")
             sys.exit(1)
 
-        # Use CLI-provided aircraft if given, otherwise interactive selection
-        if aircraft_override:
+        # Use CLI-provided aircraft if given, otherwise interactive selection.
+        # Special case: DCS's Lua hook can pass --aircraft "unknown" when the
+        # player unit isn't ready yet at onSimulationStart.  Treat that (and
+        # any value that fails to resolve) as no-arg-passed, falling back to
+        # the previously saved aircraft instead of breaking command loading.
+        used_override = False
+        if aircraft_override and aircraft_override.lower() != "unknown":
             # Resolve DCS unit type (e.g., "FA-18C_hornet") to module name ("FA-18C")
             resolved = resolve_unit_type_to_module(self.dcs_dir, aircraft_override)
             if resolved:
                 logger.info("Resolved unit type %r to module %r", aircraft_override, resolved)
                 self.aircraft: Optional[str] = resolved
+                save_selected_aircraft(self.aircraft)
+                logger.info("Aircraft set from command line: %s", self.aircraft)
+                used_override = True
             else:
-                # Show what's available so the user can fix their --aircraft arg
+                # Show what's available and fall back to settings.json instead
+                # of saving / using the bad value (which would break keybinds).
                 available = list_installed_aircraft(self.dcs_dir)
                 logger.error(
-                    "Could not resolve aircraft %r. Available modules: %s",
-                    aircraft_override, ", ".join(available) if available else "(none found)",
+                    "Could not resolve aircraft %r — falling back to saved aircraft. "
+                    "Available modules: %s",
+                    aircraft_override,
+                    ", ".join(available) if available else "(none found)",
                 )
-                self.aircraft = aircraft_override
-            save_selected_aircraft(self.aircraft)
-            logger.info("Aircraft set from command line: %s", self.aircraft)
-        else:
+        elif aircraft_override:
+            logger.warning(
+                "DCS passed --aircraft %r (unit not ready yet?) — "
+                "falling back to saved aircraft.",
+                aircraft_override,
+            )
+
+        if not used_override:
             self.aircraft = _ensure_aircraft(self.dcs_dir)
         if not self.aircraft:
             logger.error("No aircraft selected. Exiting.")

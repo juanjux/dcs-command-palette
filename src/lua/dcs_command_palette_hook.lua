@@ -57,7 +57,25 @@ end
 
 local paletteCallbacks = {}
 
-function paletteCallbacks.onSimulationStart()
+-- State for deferred launch.  In onSimulationStart the player unit may
+-- not be spawned yet, so DCS.getPlayerUnitType() returns nil and the
+-- palette would launch with --aircraft "unknown".  We retry on each
+-- onSimulationFrame until we get a real type or we've waited long
+-- enough — then launch (passing nothing if still unknown so the .exe
+-- falls back to the saved aircraft instead of breaking).
+local pendingLaunch = false
+local launchAttempts = 0
+local MAX_LAUNCH_ATTEMPTS = 60  -- ~1 second at 60 fps
+
+local function tryGetAircraft()
+    local status, result = pcall(DCS.getPlayerUnitType)
+    if status and result and result ~= "" then
+        return result
+    end
+    return nil
+end
+
+local function doLaunch(aircraft)
     local paletteDir = getPaletteDir()
     local executable, script = getExecutable(paletteDir)
 
@@ -66,14 +84,8 @@ function paletteCallbacks.onSimulationStart()
         return
     end
 
-    -- Get the current aircraft type
-    local aircraft = "unknown"
-    local status, result = pcall(DCS.getPlayerUnitType)
-    if status and result then
-        aircraft = result
-    end
-
-    log.write(paletteName, log.INFO, "Starting palette for aircraft: " .. aircraft)
+    local aircraftDisplay = aircraft or "(unknown — letting palette use saved aircraft)"
+    log.write(paletteName, log.INFO, "Starting palette for aircraft: " .. aircraftDisplay)
 
     -- Kill any leftover palette process from a previous DCS session.
     -- Avoids running two instances at once after upgrades, which causes
@@ -81,17 +93,24 @@ function paletteCallbacks.onSimulationStart()
     -- /F = force, /T = also kill child processes, 2>nul silences output.
     os.execute('taskkill /F /IM dcs-command-palette.exe /T >nul 2>nul')
 
-    -- Build the launch command
+    -- Build the launch command.  Only pass --aircraft when we actually
+    -- have a valid value.  Without it, the .exe uses the saved aircraft
+    -- from settings.json, which is far better than "unknown".
+    local aircraftArg = ""
+    if aircraft then
+        aircraftArg = ' --aircraft "' .. aircraft .. '"'
+    end
+
     local cmd
     if script then
         -- Development mode: python.exe + main.py
         log.write(paletteName, log.INFO, "Python: " .. executable)
         log.write(paletteName, log.INFO, "Script: " .. script)
-        cmd = 'start "" /B "' .. executable .. '" "' .. script .. '" --aircraft "' .. aircraft .. '"'
+        cmd = 'start "" /B "' .. executable .. '" "' .. script .. '"' .. aircraftArg
     else
         -- Standalone .exe mode
         log.write(paletteName, log.INFO, "Executable: " .. executable)
-        cmd = 'start "" /B "' .. executable .. '" --aircraft "' .. aircraft .. '"'
+        cmd = 'start "" /B "' .. executable .. '"' .. aircraftArg
     end
 
     log.write(paletteName, log.INFO, "Launching: " .. cmd)
@@ -100,7 +119,46 @@ function paletteCallbacks.onSimulationStart()
     paletteProcess = true
 end
 
+function paletteCallbacks.onSimulationStart()
+    -- Don't launch yet — the player unit isn't always ready here.
+    -- onSimulationFrame will detect a valid aircraft name and launch.
+    pendingLaunch = true
+    launchAttempts = 0
+
+    -- Try once immediately in case the unit is already there.
+    local aircraft = tryGetAircraft()
+    if aircraft then
+        pendingLaunch = false
+        doLaunch(aircraft)
+    end
+end
+
+function paletteCallbacks.onSimulationFrame()
+    if not pendingLaunch then
+        return
+    end
+
+    launchAttempts = launchAttempts + 1
+    local aircraft = tryGetAircraft()
+
+    if aircraft then
+        pendingLaunch = false
+        doLaunch(aircraft)
+    elseif launchAttempts >= MAX_LAUNCH_ATTEMPTS then
+        -- Give up waiting; launch without --aircraft so the palette
+        -- uses the previously-saved aircraft instead of "unknown".
+        pendingLaunch = false
+        log.write(paletteName, log.WARNING,
+            "DCS.getPlayerUnitType() unavailable after " ..
+            MAX_LAUNCH_ATTEMPTS .. " frames; launching without --aircraft")
+        doLaunch(nil)
+    end
+end
+
 function paletteCallbacks.onSimulationStop()
+    -- Cancel any deferred launch in case sim stops before we got a unit type.
+    pendingLaunch = false
+
     if paletteProcess then
         log.write(paletteName, log.INFO, "Stopping palette process")
         -- Kill all pythonw.exe instances running main.py
