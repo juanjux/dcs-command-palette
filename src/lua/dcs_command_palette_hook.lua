@@ -63,9 +63,14 @@ local paletteCallbacks = {}
 -- onSimulationFrame until we get a real type or we've waited long
 -- enough — then launch (passing nothing if still unknown so the .exe
 -- falls back to the saved aircraft instead of breaking).
+--
+-- Real campaigns and mission-editor briefings can leave the player in a
+-- selection screen for many seconds (sometimes a minute+) before the
+-- unit actually spawns.  We're patient: poll for 5 minutes total before
+-- giving up.  Polling itself is essentially free.
 local pendingLaunch = false
 local launchAttempts = 0
-local MAX_LAUNCH_ATTEMPTS = 60  -- ~1 second at 60 fps
+local MAX_LAUNCH_ATTEMPTS = 18000  -- 5 minutes at 60 fps
 
 local function tryGetAircraft()
     local status, result = pcall(DCS.getPlayerUnitType)
@@ -149,8 +154,8 @@ function paletteCallbacks.onSimulationFrame()
         -- uses the previously-saved aircraft instead of "unknown".
         pendingLaunch = false
         log.write(paletteName, log.WARNING,
-            "DCS.getPlayerUnitType() unavailable after " ..
-            MAX_LAUNCH_ATTEMPTS .. " frames; launching without --aircraft")
+            "DCS.getPlayerUnitType() still nil after ~5 min; " ..
+            "launching without --aircraft")
         doLaunch(nil)
     end
 end
