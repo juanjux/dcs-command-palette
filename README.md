@@ -20,6 +20,16 @@ A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by def
 
 - DCS World (Steam or standalone)
 - DCS-BIOS (can be installed from the Settings dialog)
+- **DCS must run in windowed or borderless mode, not exclusive fullscreen** — see note below
+
+### Fullscreen mode
+
+The palette is a standard Windows overlay window. This works perfectly against DCS in **windowed** or **borderless fullscreen** (`fullScreen = false` with a window size matching your desktop resolution), but **not** against **exclusive fullscreen** (`fullScreen = true` in `options.lua`). In exclusive mode, when the palette opens Windows has to leave the exclusive display mode, which causes a flash to the desktop and DCS loses focus — the palette appears but not over the game.
+
+This is a Windows-level limitation of exclusive fullscreen, not specific to this tool, and affects any external overlay (Discord, Steam, task manager, etc.). Two options:
+
+1. **Switch DCS to borderless** (recommended): in DCS Options → System, uncheck "Full screen" and set resolution to your desktop's native resolution. You get the same visual result with no performance penalty on modern Windows/drivers, and every overlay tool works normally.
+2. **Windows 11 auto-HDR and NVIDIA RTX HDR** now both work on borderless windows with recent drivers — you shouldn't need exclusive fullscreen just for HDR on Windows 11 22H2+.
 
 ## Installation
 
