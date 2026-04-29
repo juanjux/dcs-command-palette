@@ -75,6 +75,12 @@ function paletteCallbacks.onSimulationStart()
 
     log.write(paletteName, log.INFO, "Starting palette for aircraft: " .. aircraft)
 
+    -- Kill any leftover palette process from a previous DCS session.
+    -- Avoids running two instances at once after upgrades, which causes
+    -- the older instance to grab the hotkey and ignore the new code.
+    -- /F = force, /T = also kill child processes, 2>nul silences output.
+    os.execute('taskkill /F /IM dcs-command-palette.exe /T >nul 2>nul')
+
     -- Build the launch command
     local cmd
     if script then
