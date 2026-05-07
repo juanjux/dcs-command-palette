@@ -1,6 +1,6 @@
 [project]
 name = "dcs-command-palette"
-version = "1.2.5"
+version = "1.3.0"
 description = "VS Code-style command palette overlay for DCS World with fuzzy search and DCS-BIOS integration"
 requires-python = ">=3.13"
 license = "MIT"
