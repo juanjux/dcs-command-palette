@@ -133,7 +133,7 @@ class HotkeyBridge(QObject):  # type: ignore[misc]
     # Fired by NavJoystickListener on a button edge.
     # Args: action_name ("up" | "down" | "activate"), is_press (True | False)
     # Consumed on the Qt thread and dispatched to the palette.
-    nav_triggered = pyqtSignal(str, bool)
+    nav_triggered = pyqtSignal(str, bool, bool)  # action, is_press, is_repeat
 
 
 class UDPToggleListener:
@@ -307,10 +307,10 @@ class NavJoystickListener:
         # Per-button state: (currently_pressed, first_press_time, last_fire_time)
         state: dict[tuple[int, int], tuple[bool, float, float]] = {}
 
-        def _fire(action_name: str, is_press: bool) -> None:
+        def _fire(action_name: str, is_press: bool, is_repeat: bool = False) -> None:
             try:
                 if self._is_active():
-                    self._on_action(action_name, is_press)
+                    self._on_action(action_name, is_press, is_repeat)
             except Exception:  # noqa: BLE001
                 logger.exception("nav callback failed")
 
@@ -324,21 +324,22 @@ class NavJoystickListener:
                         key, (False, 0.0, 0.0),
                     )
                     if pressed and not was_pressed:
-                        # Initial press edge — fire once.
-                        _fire(action_name, True)
+                        # Initial press edge — fire once (not a repeat).
+                        _fire(action_name, True, is_repeat=False)
                         state[key] = (True, now, now)
                     elif pressed and was_pressed:
                         # Button held — only repeat if this action opted in.
-                        # Activate / select shouldn't auto-fire.
+                        # The dispatcher (in dispatch_nav) further filters
+                        # which contexts should actually act on a repeat.
                         if (action_name in self._repeat_actions
                                 and now - first_press >= self._INITIAL_DELAY
                                 and now - last_fire >= self._REPEAT_INTERVAL):
-                            _fire(action_name, True)
+                            _fire(action_name, True, is_repeat=True)
                             state[key] = (True, first_press, now)
                     elif not pressed and was_pressed:
                         # Release edge — fire so the palette can finish any
                         # hold state (momentary release / spring-loaded recenter).
-                        _fire(action_name, False)
+                        _fire(action_name, False, is_repeat=False)
                         state[key] = (False, 0.0, 0.0)
             except Exception:  # noqa: BLE001
                 logger.exception("Nav joystick poll error")
@@ -847,9 +848,9 @@ class App:
             self._nav_joy_listener = None
 
         # Joystick polling — only if at least one is a joystick binding
-        def _on_action(name: str, is_press: bool) -> None:
+        def _on_action(name: str, is_press: bool, is_repeat: bool) -> None:
             # Bridge back to the Qt thread via a queued signal
-            self._bridge.nav_triggered.emit(name, is_press)
+            self._bridge.nav_triggered.emit(name, is_press, is_repeat)
 
         def _is_active() -> bool:
             return bool(self.palette is not None and self.palette.isVisible())
@@ -858,7 +859,10 @@ class App:
             bindings={"up": up, "down": down, "activate": activate},
             on_action=_on_action,
             is_active=_is_active,
-            repeat_actions={"up", "down"},  # activate doesn't auto-repeat
+            # Activate auto-repeats too so holding the HOTAS button on an
+            # INC/DEC submenu button scrubs through values.  dispatch_nav
+            # filters which contexts actually act on the repeat events.
+            repeat_actions={"up", "down", "activate"},
         )
         if self._nav_joy_listener.has_joystick_bindings:
             self._nav_joy_listener.start()
@@ -980,7 +984,7 @@ class App:
 
         bridge.triggered.connect(toggle_palette)
 
-        def dispatch_nav(action: str, is_press: bool) -> None:
+        def dispatch_nav(action: str, is_press: bool, is_repeat: bool) -> None:
             if not self.palette or not self.palette.isVisible():
                 return
             if not is_press:
@@ -988,13 +992,21 @@ class App:
                 if action == "activate":
                     self.palette.nav_deactivate()
                 return
-            # Press edge
+            # Press / repeat edge
             if action == "up":
+                # First press AND repeats both navigate
                 self.palette.nav_select_up()
             elif action == "down":
                 self.palette.nav_select_down()
             elif action == "activate":
-                self.palette.nav_activate()
+                if is_repeat:
+                    # Only re-fire activate while held when the focused
+                    # widget is an INC / DEC button in the submenu.
+                    # Anything else (toggles, momentary holds, position
+                    # buttons) would misbehave on repeat.
+                    self.palette.nav_activate_repeat()
+                else:
+                    self.palette.nav_activate()
 
         bridge.nav_triggered.connect(dispatch_nav)
 

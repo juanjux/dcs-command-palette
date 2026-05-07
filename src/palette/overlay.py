@@ -1540,6 +1540,32 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         else:
             self._finish_hold()
 
+    # Buttons whose text-content (after stripping arrows / whitespace)
+    # qualifies for press-and-hold auto-repeat from the activate binding.
+    _AUTO_REPEAT_BUTTON_TEXTS = {"INC", "DEC", "+", "-", "+ INC", "- DEC"}
+
+    def nav_activate_repeat(self) -> None:
+        """Re-fire the focused INC / DEC submenu button while activate is held.
+
+        Called from main.py's dispatch_nav on each auto-repeat tick of the
+        Activate joystick binding.  Only acts when:
+          - The submenu is open
+          - The focused widget is a button labeled INC, DEC, + or -
+          - No hold is currently active (defensive)
+
+        Anything else is ignored so toggle / momentary / position-button
+        clicks never get double-fired while the user holds Activate.
+        """
+        self._restart_inactivity_timer()
+        if not self._in_submenu or self._hold_active:
+            return
+        focused = QApplication.focusWidget()
+        if not isinstance(focused, QPushButton):
+            return
+        label = focused.text().strip().strip("◄").strip()
+        if label in self._AUTO_REPEAT_BUTTON_TEXTS:
+            focused.click()
+
     def apply_keyboard_nav_bindings(
         self, up_combo: str, down_combo: str, activate_combo: str = "",
     ) -> None:
