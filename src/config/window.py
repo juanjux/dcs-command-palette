@@ -64,9 +64,13 @@ def _get_version_string() -> str:
     commit = "unknown"
     if not getattr(sys, "frozen", False):
         try:
+            # CREATE_NO_WINDOW prevents a console flashing on screen when
+            # the host is a GUI app (pythonw / frozen exe).  capture_output
+            # alone isn't enough on Windows.
             result = subprocess.run(
                 ["git", "rev-parse", "--short", "HEAD"],
                 capture_output=True, text=True, timeout=2, cwd=PROJECT_DIR,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if result.returncode == 0:
                 commit = result.stdout.strip()

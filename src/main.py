@@ -950,6 +950,13 @@ class App:
         subprocess.Popen(
             [sys.executable] + sys.argv,
             cwd=os.path.dirname(os.path.abspath(__file__)),
+            # DETACHED_PROCESS + CREATE_NO_WINDOW: avoid a flashing console
+            # when relaunching from a GUI host on Windows.
+            creationflags=(
+                getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            ),
+            close_fds=True,
         )
         self.qapp.quit()
 
@@ -1116,6 +1123,9 @@ def _get_git_commit() -> str:
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, timeout=5,
             cwd=PROJECT_DIR,
+            # CREATE_NO_WINDOW: prevent a console flash on Windows
+            # when this is called from a frozen exe / pythonw context.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode == 0:
             return result.stdout.strip()

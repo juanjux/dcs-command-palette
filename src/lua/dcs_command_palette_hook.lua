@@ -80,6 +80,48 @@ local function tryGetAircraft()
     return nil
 end
 
+-- Run a command via a hidden VBScript wrapper.  Plain os.execute() goes
+-- through cmd.exe /c, which briefly flashes a console window on screen
+-- every time it's called.  By writing a tiny .vbs and invoking it with
+-- wscript //B, we collapse the two console calls (taskkill + launch)
+-- into a single very brief wscript launch — and the commands the .vbs
+-- runs internally use WScript.Shell.Run with windowstyle=0, so they
+-- never flash a window at all.
+local function vbsEscape(s)
+    -- VBScript escapes a double-quote by doubling it.
+    -- Wrap in parens so the gsub count return value doesn't leak when
+    -- this function is used as an extra arg to something.
+    return (s:gsub('"', '""'))
+end
+
+local function runHidden(paletteDir, taskkillCmd, launchCmd)
+    local vbsPath = paletteDir .. "_dcs_palette_launch.vbs"
+    -- "wb": binary mode so we don't get \r\n doubled to \r\r\n by Lua's
+    -- text-mode line-ending conversion on Windows.  Write explicit \r\n.
+    local f = io.open(vbsPath, "wb")
+    if not f then
+        -- Falling back to plain os.execute on write failure; better a
+        -- brief flash than no launch at all.
+        log.write(paletteName, log.WARNING,
+            "Could not write VBS wrapper at " .. vbsPath ..
+            "; falling back to direct os.execute (will flash cmd).")
+        os.execute(taskkillCmd)
+        os.execute(launchCmd)
+        return
+    end
+
+    f:write('Set sh = CreateObject("WScript.Shell")\r\n')
+    -- Wait for taskkill (True) so the old process is gone before we spawn the new one.
+    f:write('sh.Run "' .. vbsEscape(taskkillCmd) .. '", 0, True\r\n')
+    -- Don't wait for the palette launch (False) — fire-and-forget.
+    f:write('sh.Run "' .. vbsEscape(launchCmd) .. '", 0, False\r\n')
+    f:close()
+
+    -- wscript //B = batch mode, no UI dialogs.  cmd /c still flashes for
+    -- ~10ms while it spawns wscript and exits, but only this once total.
+    os.execute('wscript //B //Nologo "' .. vbsPath .. '"')
+end
+
 local function doLaunch(aircraft)
     local paletteDir = getPaletteDir()
     local executable, script = getExecutable(paletteDir)
@@ -92,34 +134,33 @@ local function doLaunch(aircraft)
     local aircraftDisplay = aircraft or "(unknown — letting palette use saved aircraft)"
     log.write(paletteName, log.INFO, "Starting palette for aircraft: " .. aircraftDisplay)
 
-    -- Kill any leftover palette process from a previous DCS session.
-    -- Avoids running two instances at once after upgrades, which causes
-    -- the older instance to grab the hotkey and ignore the new code.
-    -- /F = force, /T = also kill child processes, 2>nul silences output.
-    os.execute('taskkill /F /IM dcs-command-palette.exe /T >nul 2>nul')
+    -- Build the kill + launch commands.  These will be executed hidden
+    -- via the VBS wrapper (see runHidden above) — no cmd flashes for
+    -- the user to see during mission load.
+    local taskkillCmd = 'taskkill /F /IM dcs-command-palette.exe /T'
 
-    -- Build the launch command.  Only pass --aircraft when we actually
-    -- have a valid value.  Without it, the .exe uses the saved aircraft
-    -- from settings.json, which is far better than "unknown".
+    -- Only pass --aircraft when we actually have a valid value.  Without
+    -- it, the .exe uses the saved aircraft from settings.json, which is
+    -- far better than "unknown".
     local aircraftArg = ""
     if aircraft then
         aircraftArg = ' --aircraft "' .. aircraft .. '"'
     end
 
-    local cmd
+    local launchCmd
     if script then
         -- Development mode: python.exe + main.py
         log.write(paletteName, log.INFO, "Python: " .. executable)
         log.write(paletteName, log.INFO, "Script: " .. script)
-        cmd = 'start "" /B "' .. executable .. '" "' .. script .. '"' .. aircraftArg
+        launchCmd = '"' .. executable .. '" "' .. script .. '"' .. aircraftArg
     else
         -- Standalone .exe mode
         log.write(paletteName, log.INFO, "Executable: " .. executable)
-        cmd = 'start "" /B "' .. executable .. '"' .. aircraftArg
+        launchCmd = '"' .. executable .. '"' .. aircraftArg
     end
 
-    log.write(paletteName, log.INFO, "Launching: " .. cmd)
-    os.execute(cmd)
+    log.write(paletteName, log.INFO, "Launching: " .. launchCmd)
+    runHidden(paletteDir, taskkillCmd, launchCmd)
 
     paletteProcess = true
 end
