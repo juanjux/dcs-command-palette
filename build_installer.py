@@ -66,6 +66,7 @@ def _generate_iss(version: str) -> str:
 #define MyAppPublisher "Juan Jose Alvarez Martinez"
 #define MyAppURL "https://github.com/juanjux/dcs-command-palette"
 #define MyAppExeName "dcs-command-palette.exe"
+#define MyAppIcon "{os.path.join(PROJECT_DIR, 'assets', 'icons', 'DCS-Command-Palette.ico')}"
 
 [Setup]
 AppId={{{{B8F3A2D1-7C4E-4F8A-9B1D-3E5F7A8C2D4E}}}}
@@ -86,6 +87,8 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={{#MyAppName}}
+SetupIconFile={{#MyAppIcon}}
+UninstallDisplayIcon={{app}}\\{{#MyAppExeName}}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -219,12 +222,15 @@ def build_pyinstaller() -> bool:
     print("=" * 60)
     print()
 
+    icon_path = os.path.join("assets", "icons", "DCS-Command-Palette.ico")
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", "dcs-command-palette",
         "--noconsole",
         "--noconfirm",
+        "--icon", icon_path,
         "--add-data", os.path.join("src", "lua", "dcs_command_palette_hook.lua") + f"{os.pathsep}.",
+        "--add-data", icon_path + f"{os.pathsep}.",
         "--hidden-import", "src.installer.wizard",
         "--hidden-import", "src.bios.installer",
         "--hidden-import", "pynput.keyboard._win32",

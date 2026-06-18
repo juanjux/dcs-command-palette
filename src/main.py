@@ -447,8 +447,35 @@ def _add_palette_commands(commands: List[Command]) -> List[Command]:
 SHUTDOWN_FILE = os.path.join(PROJECT_DIR, ".shutdown")
 
 
+def _app_icon_path() -> Optional[str]:
+    """Locate the bundled application .ico, in dev and frozen layouts.
+
+    In a PyInstaller --onedir build the icon is added as data with dest '.',
+    so it lands at the root of sys._MEIPASS.  In dev it lives under assets/.
+    """
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, "DCS-Command-Palette.ico"))
+    candidates.append(os.path.join(PROJECT_DIR, "assets", "icons", "DCS-Command-Palette.ico"))
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def _create_tray_icon() -> QIcon:
-    """Create a simple tray icon: a blue/white command palette symbol."""
+    """Return the application icon, falling back to a drawn palette symbol.
+
+    Prefers the bundled multi-resolution .ico; if it can't be found (e.g.
+    a stripped dev checkout) we draw the original blue/white ">_" glyph.
+    """
+    icon_path = _app_icon_path()
+    if icon_path:
+        icon = QIcon(icon_path)
+        if not icon.isNull():
+            return icon
+
     from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont, QPen
     from PyQt6.QtCore import Qt, QRect
 
@@ -479,6 +506,7 @@ class App:
     def __init__(self, aircraft_override: Optional[str] = None) -> None:
         self.qapp = QApplication(sys.argv)
         self.qapp.setQuitOnLastWindowClosed(False)
+        self.qapp.setWindowIcon(_create_tray_icon())
 
         # First-run setup (installs hook, offers DCS-BIOS)
         self._first_run_setup()
