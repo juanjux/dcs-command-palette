@@ -222,23 +222,8 @@ def build_pyinstaller() -> bool:
     print("=" * 60)
     print()
 
-    icon_path = os.path.join("assets", "icons", "DCS-Command-Palette.ico")
-    cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--name", "dcs-command-palette",
-        "--noconsole",
-        "--noconfirm",
-        "--icon", icon_path,
-        "--add-data", os.path.join("src", "lua", "dcs_command_palette_hook.lua") + f"{os.pathsep}.",
-        "--add-data", icon_path + f"{os.pathsep}.",
-        "--hidden-import", "src.installer.wizard",
-        "--hidden-import", "src.bios.installer",
-        "--hidden-import", "pynput.keyboard._win32",
-        "--hidden-import", "pynput.mouse._win32",
-        "--collect-all", "pygame",
-        "main.py",
-    ]
-
+    # Keep installer and portable builds on the same isolated DLL collection path.
+    cmd = [sys.executable, os.path.join(PROJECT_DIR, "build_exe.py")]
     result = subprocess.run(cmd, cwd=PROJECT_DIR)
     if result.returncode != 0:
         print("ERROR: PyInstaller build failed!")
