@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from src.config.settings import AIRCRAFT_INPUT_NAME, AIRCRAFT_MODULE, DCS_INSTALL_DIR, DCS_SAVED_GAMES
 from src.bios.controls import Control, load_controls
 from src.lib.keyboard import KeyboardEntry, load_keyboard_entries
+from src.lib.head_tracking import HEAD_TRACKING_COMMANDS
 
 
 class CommandSource(Enum):
@@ -45,6 +46,13 @@ class Command:
 
     # Keyboard shortcut specific
     key_combo: str = ""
+
+    @property
+    def can_favorite(self) -> bool:
+        """Tracking actions support favorites; palette settings commands do not."""
+        return self.identifier in HEAD_TRACKING_COMMANDS or not (
+            self.identifier.startswith("__") and self.identifier.endswith("__")
+        )
 
     @property
     def is_momentary(self) -> bool:

@@ -16,6 +16,26 @@ A VS Code-style command palette for DCS World. Press a hotkey (Ctrl+Space by def
 - **Live cockpit state** from DCS-BIOS -- shows current switch positions in the palette
 - **Built-in DCS-BIOS installer** in the settings dialog
 
+### Temporary head tracking control
+
+Search the Palette for **Disable head tracking**, **Enable head tracking**, or
+**Toggle head tracking**. These commands temporarily disable/enable DCS's TrackIR
+input device (also used by OpenTrack), rather than freezing the pose in OpenTrack.
+Click their star to save them as favorites, just like aircraft commands.
+Use your normal DCS clickable-cockpit/mouse-look binding to switch between looking
+and clicking. The commands do not change that binding or stop OpenTrack itself.
+
+Install the updated Palette hook and restart DCS before first use. Run commands
+in an **unpaused mission**. A loopback-only bridge on UDP port 7781 acknowledges
+changes; Palette reports success/error via its tray notification and log. No
+acknowledgement means the result is unknown, not success; retry with Enable or
+Disable rather than Toggle. DCS-BIOS is not used for these commands.
+
+The override is not saved to `Config/Input/disabled.lua`. Pausing or ending the
+mission restores the configured device state; after resuming, issue Disable again
+if needed. Other input devices and bindings are untouched. This uses DCS's internal
+Input API, so verify mouse-look behaviour with your installed DCS/OpenTrack version.
+
 ## Requirements
 
 - DCS World (Steam or standalone)

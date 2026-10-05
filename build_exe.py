@@ -1,4 +1,4 @@
-"""Build script for creating the DCS Command Palette .exe distribution.
+r"""Build script for creating the DCS Command Palette .exe distribution.
 
 Usage:
     python build_exe.py
@@ -17,6 +17,28 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_DIR, "dist", "dcs-command-palette")
 
 
+def refresh_windows_runtime(dist_dir: str) -> None:
+    """Avoid Qt's bundled old MSVC DLLs shadowing the system runtime.
+
+    Some Qt wheels ship 14.26 DLLs which miss exports required by current Qt.
+    Bundle the build machine's installed redistributable, never modify Windows.
+    """
+    if sys.platform != "win32":
+        return
+    system_dir = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                              "System32" if sys.maxsize > 2**32 else "SysWOW64")
+    destinations = [os.path.join(dist_dir, "_internal"),
+                    os.path.join(dist_dir, "_internal", "PyQt6", "Qt6", "bin")]
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+                 "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll",
+                 "vcruntime140.dll", "vcruntime140_1.dll"):
+        source = os.path.join(system_dir, name)
+        if os.path.isfile(source):
+            for destination in destinations:
+                if os.path.isdir(destination):
+                    shutil.copy2(source, os.path.join(destination, name))
+
+
 def build() -> None:
     print("Building DCS Command Palette .exe...")
 
@@ -26,6 +48,9 @@ def build() -> None:
         "--name", "dcs-command-palette",
         "--noconsole",  # No console window (GUI app)
         "--noconfirm",  # Overwrite without asking
+        "--clean",  # Re-resolve DLLs using the controlled build environment
+        "--icon", os.path.join("assets", "icons", "DCS-Command-Palette.ico"),
+        "--add-data", os.path.join("assets", "icons", "DCS-Command-Palette.ico") + f"{os.pathsep}.",
         # Include the Lua hook file as data
         "--add-data", os.path.join("src", "lua", "dcs_command_palette_hook.lua") + f"{os.pathsep}.",
         # Include installer modules so they're available at runtime
@@ -41,12 +66,23 @@ def build() -> None:
     ]
 
     print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=PROJECT_DIR)
+    build_env = os.environ.copy()
+    if sys.platform == "win32":
+        # Native DLL discovery must not pick an unrelated ICU/Qt from tools on
+        # PATH (e.g. Poppler). Qt uses the Windows ICU ABI, not ICU's suffixed ABI.
+        windows = os.environ.get("SystemRoot", r"C:\Windows")
+        build_env["PATH"] = os.pathsep.join([
+            os.path.dirname(sys.executable), sys.base_prefix,
+            os.path.join(sys.base_prefix, "DLLs"),
+            os.path.join(windows, "System32"), windows,
+        ])
+    result = subprocess.run(cmd, cwd=PROJECT_DIR, env=build_env)
 
     if result.returncode != 0:
         print("ERROR: PyInstaller build failed!")
         sys.exit(1)
 
+    refresh_windows_runtime(DIST_DIR)
     print(f"\nBuild successful! Output: {DIST_DIR}")
     print("\nTo distribute:")
     print(f"  1. Copy the '{DIST_DIR}' folder to the target machine")

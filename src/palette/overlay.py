@@ -164,9 +164,7 @@ class ResultItem(QWidget):  # type: ignore[misc]
                     f"color: {TEXT_MUTED_COLOR}; font-size: {cfg.COMBO_FONT_SIZE}px;"
                 )
 
-        # Favorite star. Built-in palette commands (identifier starts with __)
-        # don't get a star — they can't be meaningfully favorited.
-        if cmd.identifier.startswith("__") and cmd.identifier.endswith("__"):
+        if not cmd.can_favorite:
             self.star_label.setText("")
         elif ResultItem._usage is not None and ResultItem._usage.is_favorite(cmd.identifier):
             self.star_label.setText("★")
@@ -916,8 +914,8 @@ class CommandPalette(QWidget):  # type: ignore[misc]
         except AttributeError:
             pos = None
         if pos is not None and star_rect.contains(pos):
-            # Built-in palette commands don't have a star — fall through to execute
-            if cmd.identifier.startswith("__") and cmd.identifier.endswith("__"):
+            # Settings commands don't have a star — fall through to execute.
+            if not cmd.can_favorite:
                 self._on_item_clicked(idx)
                 return
             new_state = self._usage.toggle_favorite(cmd.identifier)

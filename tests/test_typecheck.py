@@ -12,6 +12,7 @@ def test_mypy_typecheck() -> None:
         os.path.join(project_dir, "src", "bios", "sender.py"),
         os.path.join(project_dir, "src", "palette", "usage.py"),
         os.path.join(project_dir, "src", "lib", "search.py"),
+        os.path.join(project_dir, "src", "lib", "head_tracking.py"),
     ]
     result = subprocess.run(
         [sys.executable, "-m", "mypy", "--config-file", os.path.join(project_dir, "pyproject.toml")]

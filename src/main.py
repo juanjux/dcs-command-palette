@@ -42,6 +42,7 @@ from src.detection import (
 )
 from src.lib.logging_setup import setup_logging
 from src.palette.usage import UsageTracker
+from src.lib.head_tracking import HEAD_TRACKING_COMMANDS, HeadTrackingClient
 
 logger = logging.getLogger(__name__)
 
@@ -441,6 +442,15 @@ def _add_palette_commands(commands: List[Command]) -> List[Command]:
             key_combo="",
         ),
     ]
+    for identifier, action in HEAD_TRACKING_COMMANDS.items():
+        builtins.append(Command(
+            identifier=identifier,
+            description=f"{action.title()} head tracking",
+            category="View / TrackIR",
+            source=CommandSource.KEYBOARD,
+            search_text=f"{action} head tracking trackir opentrack mouse look cold start view",
+            key_combo="",
+        ))
     return builtins + commands
 
 
@@ -564,6 +574,13 @@ class App:
         self._bios_missing = False  # True if no BIOS JSON found for current aircraft
         self._bios_fallback_offered = False  # True after we've shown the fallback dialog
         self._load_commands()
+
+        from PyQt6.QtCore import QTimer
+        self._head_tracking = HeadTrackingClient()
+        self._head_tracking_timer = QTimer()
+        self._head_tracking_timer.setInterval(50)
+        self._head_tracking_timer.timeout.connect(self._poll_head_tracking)
+        self.qapp.aboutToQuit.connect(self._head_tracking.close)
 
         # Clean up any leftover shutdown file
         self._cleanup_shutdown_file()
@@ -782,7 +799,13 @@ class App:
         self.palette.palette_command_triggered = self._on_palette_command  # type: ignore[attr-defined]
 
     def _on_palette_command(self, identifier: str) -> None:
-        if identifier == "__CHANGE_AIRCRAFT__":
+        if identifier in HEAD_TRACKING_COMMANDS:
+            try:
+                self._head_tracking.start(HEAD_TRACKING_COMMANDS[identifier])
+                self._head_tracking_timer.start()
+            except (OSError, RuntimeError) as exc:
+                self._head_tracking_feedback(str(exc), error=True)
+        elif identifier == "__CHANGE_AIRCRAFT__":
             self._change_aircraft()
         elif identifier == "__PALETTE_CONFIG__":
             self._open_config()
@@ -791,6 +814,26 @@ class App:
             self.qapp.quit()
         elif identifier == "__RESTART_PALETTE__":
             self._restart()
+
+    def _head_tracking_feedback(self, message: str, error: bool = False) -> None:
+        logger.log(logging.WARNING if error else logging.INFO, "Head tracking: %s", message)
+        tray = getattr(self, "_tray", None)
+        if isinstance(tray, QSystemTrayIcon):
+            icon = (QSystemTrayIcon.MessageIcon.Warning if error
+                    else QSystemTrayIcon.MessageIcon.Information)
+            tray.showMessage("Head tracking", message, icon, 4000)
+
+    def _poll_head_tracking(self) -> None:
+        try:
+            state = self._head_tracking.poll()
+        except (OSError, RuntimeError) as exc:
+            self._head_tracking_timer.stop()
+            self._head_tracking_feedback(str(exc), error=True)
+            return
+        if state is not None:
+            self._head_tracking_timer.stop()
+            hint = " Use your cockpit mouse-look toggle to look or click." if state == "disabled" else ""
+            self._head_tracking_feedback(f"DCS head tracking {state}.{hint}")
 
     def _change_aircraft(self) -> None:
         if not self.dcs_dir:

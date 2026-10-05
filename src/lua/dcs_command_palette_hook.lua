@@ -57,6 +57,125 @@ end
 
 local paletteCallbacks = {}
 
+-- Local-only, fixed-command bridge. No received Lua or shell code is evaluated.
+-- Use the native Input setter, not Input.Data's persistent settings setter:
+-- this is a temporary mission override, never written to Config/Input/disabled.lua.
+local trackingSocket, trackingClock
+local trackingDevice, trackingDisabled, trackingOriginal
+local trackingReplies = {}
+local trackingReplyOrder = {}
+
+local function restoreTracking()
+    if trackingDevice then
+        local ok, err = pcall(function()
+            local Input = require('Input')
+            local InputData = require('Input.Data')
+            -- Respect any deliberate Controls-menu changes made during the mission.
+            Input.setDeviceDisabled(trackingDevice, InputData.getDeviceDisabled(trackingDevice))
+        end)
+        if not ok then
+            log.write(paletteName, log.ERROR, 'Head tracking restore failed: ' .. tostring(err))
+        end
+    end
+    trackingDevice, trackingDisabled, trackingOriginal = nil, nil, nil
+end
+
+local function closeTrackingBridge()
+    restoreTracking()
+    if trackingSocket then trackingSocket:close() end
+    trackingSocket, trackingClock = nil, nil
+    trackingReplies, trackingReplyOrder = {}, {}
+end
+
+local function startTrackingBridge()
+    closeTrackingBridge()
+    local ok, err = pcall(function()
+        local socket = require('socket')
+        local udp = assert(socket.udp())
+        udp:settimeout(0)
+        local bound, bindError = udp:setsockname('127.0.0.1', 7781)
+        if not bound then
+            udp:close()
+            error(bindError)
+        end
+        trackingSocket, trackingClock = udp, socket.gettime
+    end)
+    if not ok then
+        log.write(paletteName, log.ERROR, 'Head tracking bridge unavailable: ' .. tostring(err))
+    end
+end
+
+local function changeTracking(action)
+    local Input = require('Input')
+    local InputData = require('Input.Data')
+    local matches = {}
+    for _, deviceName in ipairs(Input.getDevices()) do
+        if Input.getDeviceTypeName(deviceName) == Input.getTrackirDeviceTypeName() then
+            matches[#matches + 1] = deviceName
+        end
+    end
+    if #matches ~= 1 then
+        error('Expected one TrackIR/OpenTrack device; found ' .. #matches)
+    end
+    local device = matches[1]
+    if trackingDevice and trackingDevice ~= device then
+        restoreTracking()
+    end
+    local configured = InputData.getDeviceDisabled(device)
+    if trackingDevice == nil or configured ~= trackingOriginal then
+        trackingDisabled = configured
+        trackingOriginal = configured
+    end
+    local disabled = action == 'disable' or (action == 'toggle' and not trackingDisabled)
+    -- Keep a restore target even if the native setter raises after changing state.
+    trackingDevice = device
+    Input.setDeviceDisabled(device, disabled)
+    trackingDisabled = disabled
+    local state = disabled and 'disabled' or 'enabled'
+    log.write(paletteName, log.INFO, 'Head tracking ' .. state .. ': ' .. device)
+    return state
+end
+
+local function pollTrackingBridge()
+    if not trackingSocket then return end
+    -- Bound work per frame even if a local application floods the port.
+    for _ = 1, 8 do
+        local message, host, port = trackingSocket:receivefrom(256)
+        if not message then break end
+        if host == '127.0.0.1' then
+            local id, expires, action = message:match('^HT1 ([a-f0-9]+) ([0-9.]+) ([a-z]+)$')
+            expires = tonumber(expires)
+            if id and #id == 32 and expires and
+                (action == 'enable' or action == 'disable' or action == 'toggle') then
+                local key = tostring(port) .. ':' .. id
+                local reply = trackingReplies[key]
+                if not reply then
+                    local now = trackingClock()
+                    if expires < now or expires > now + 5 then
+                        reply = 'ERR Request expired; try again in an unpaused mission'
+                    else
+                        local ok, result = pcall(changeTracking, action)
+                        if ok then
+                            reply = 'OK ' .. result
+                        else
+                            -- Undo a partially applied override; no silent failure.
+                            restoreTracking()
+                            log.write(paletteName, log.ERROR, 'Head tracking: ' .. tostring(result))
+                            reply = 'ERR Could not change TrackIR input; see dcs.log'
+                        end
+                    end
+                    trackingReplies[key] = reply
+                    trackingReplyOrder[#trackingReplyOrder + 1] = key
+                    if #trackingReplyOrder > 64 then
+                        trackingReplies[table.remove(trackingReplyOrder, 1)] = nil
+                    end
+                end
+                trackingSocket:sendto('HT1 ' .. id .. ' ' .. reply, host, port)
+            end
+        end
+    end
+end
+
 -- State for deferred launch.  In onSimulationStart the player unit may
 -- not be spawned yet, so DCS.getPlayerUnitType() returns nil and the
 -- palette would launch with --aircraft "unknown".  We retry on each
@@ -166,6 +285,7 @@ local function doLaunch(aircraft)
 end
 
 function paletteCallbacks.onSimulationStart()
+    startTrackingBridge()
     -- Don't launch yet — the player unit isn't always ready here.
     -- onSimulationFrame will detect a valid aircraft name and launch.
     pendingLaunch = true
@@ -180,6 +300,7 @@ function paletteCallbacks.onSimulationStart()
 end
 
 function paletteCallbacks.onSimulationFrame()
+    pollTrackingBridge()
     if not pendingLaunch then
         return
     end
@@ -202,6 +323,7 @@ function paletteCallbacks.onSimulationFrame()
 end
 
 function paletteCallbacks.onSimulationStop()
+    closeTrackingBridge()
     -- Cancel any deferred launch in case sim stops before we got a unit type.
     pendingLaunch = false
 
@@ -220,6 +342,12 @@ function paletteCallbacks.onSimulationStop()
         end
         paletteProcess = nil
     end
+end
+
+function paletteCallbacks.onSimulationPause()
+    -- Do not carry a hidden runtime override into the Controls menu, which
+    -- may reapply its configured device state. Reissue the command after resume.
+    restoreTracking()
 end
 
 DCS.setUserCallbacks(paletteCallbacks)

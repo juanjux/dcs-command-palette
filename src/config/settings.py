@@ -20,7 +20,7 @@ if getattr(sys, "frozen", False):
     # Frozen exe: _internal/ contains the bundled code; project root is its parent
     PROJECT_DIR: str = os.path.dirname(sys._MEIPASS)  # type: ignore[attr-defined]
 else:
-    PROJECT_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _detect_dcs_saved_games() -> str:

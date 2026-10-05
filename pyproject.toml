@@ -22,6 +22,7 @@ Issues = "https://github.com/juanjux/dcs-command-palette/issues"
 
 [dependency-groups]
 dev = [
+    "lupa>=2.0",
     "mypy>=1.19.1",
     "pytest>=8.4.2",
 ]
